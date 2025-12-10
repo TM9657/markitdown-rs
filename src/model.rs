@@ -155,6 +155,8 @@ pub struct Page {
     pub page_number: u32,
     /// Content blocks in order
     pub content: Vec<ContentBlock>,
+    /// Optional rendered image of the entire page (for scanned PDFs, slides, complex layouts)
+    pub rendered_image: Option<ExtractedImage>,
 }
 
 impl Page {
@@ -162,7 +164,14 @@ impl Page {
         Self {
             page_number,
             content: Vec::new(),
+            rendered_image: None,
         }
+    }
+
+    /// Set the rendered image for this page
+    pub fn with_rendered_image(mut self, image: ExtractedImage) -> Self {
+        self.rendered_image = Some(image);
+        self
     }
 
     /// Add a content block to the page

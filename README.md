@@ -254,6 +254,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+#### Working with the Output Structure
+
+The conversion returns a `Document` struct that preserves the page/slide structure of the original file:
+
+```rust
+use markitdown::{MarkItDown, Document, Page, ContentBlock, ExtractedImage};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let md = MarkItDown::new();
+    let result: Document = md.convert("presentation.pptx", None).await?;
+    
+    // Access document metadata
+    if let Some(title) = &result.title {
+        println!("Document: {}", title);
+    }
+    
+    // Iterate through pages/slides
+    for page in &result.pages {
+        println!("Page {}", page.page_number);
+        
+        // Get page content as markdown
+        let markdown = page.to_markdown();
+        
+        // Or access individual content blocks
+        for block in &page.content {
+            match block {
+                ContentBlock::Text(text) => println!("Text: {}", text),
+                ContentBlock::Heading { level, text } => println!("H{}: {}", level, text),
+                ContentBlock::Image(img) => {
+                    println!("Image: {} ({} bytes)", img.id, img.data.len());
+                    if let Some(desc) = &img.description {
+                        println!("  Description: {}", desc);
+                    }
+                }
+                ContentBlock::Table { headers, rows } => {
+                    println!("Table: {} cols, {} rows", headers.len(), rows.len());
+                }
+                ContentBlock::List { ordered, items } => {
+                    println!("List ({} items)", items.len());
+                }
+                ContentBlock::Code { language, code } => {
+                    println!("Code block: {:?}", language);
+                }
+                ContentBlock::Quote(text) => println!("Quote: {}", text),
+                ContentBlock::Markdown(md) => println!("Markdown: {}", md),
+            }
+        }
+        
+        // Get all images from this page
+        let images: Vec<&ExtractedImage> = page.images();
+        
+        // Access rendered page image (for scanned PDFs, complex pages)
+        if let Some(rendered) = &page.rendered_image {
+            println!("Page rendered as image: {} bytes", rendered.data.len());
+        }
+    }
+    
+    // Convert entire document to markdown (with page separators)
+    let full_markdown = result.to_markdown();
+    
+    // Get all images from the entire document
+    let all_images = result.images();
+    
+    Ok(())
+}
+```
+
+**Output Structure:**
+- `Document` - Complete document with optional title, pages, and metadata
+  - `Page` - Single page/slide with page number and content blocks
+    - `ContentBlock` - Individual content element (Text, Heading, Image, Table, List, Code, Quote, Markdown)
+    - `rendered_image` - Optional full-page render (for scanned PDFs, slides with complex layouts)
+  - `ExtractedImage` - Image data with id, bytes, MIME type, dimensions, alt text, and LLM description
+
+This structure is ideal for:
+- **Pagination-aware processing** - Handle each page separately
+- **Image extraction** - Access embedded images with their metadata
+- **Structured content** - Work with tables, lists, headings programmatically
+- **LLM pipelines** - Pass individual pages or content blocks to AI models
+
 ## Recent Improvements
 
 ### Format Expansion
