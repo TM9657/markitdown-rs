@@ -1,37 +1,38 @@
+use bytes::Bytes;
 use markitdown::{model::ConversionOptions, MarkItDown};
 
-#[test]
-fn test_docx_conversion() {
+#[tokio::test]
+async fn test_docx_conversion() {
     let options = ConversionOptions {
         file_extension: Some(".docx".to_string()),
         url: None,
         llm_client: None,
-        llm_model: None,
+        extract_images: true,
     };
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert("tests/test_files/test.docx", Some(options));
+    let result = markitdown.convert("tests/test_files/test.docx", Some(options)).await;
     assert!(result.is_ok());
     let unwrapped_result = result.unwrap();
-    assert!(unwrapped_result.is_some());
-    write_to_file(&unwrapped_result.unwrap().text_content);
+    write_to_file(&unwrapped_result.to_markdown());
 }
 
-#[test]
-fn test_docx_bytes_conversion() {
+#[tokio::test]
+async fn test_docx_bytes_conversion() {
     let options = ConversionOptions {
         file_extension: Some(".docx".to_string()),
         url: None,
         llm_client: None,
-        llm_model: None,
+        extract_images: true,
     };
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert_bytes(include_bytes!("./test_files/test.docx"), Some(options));
+    let result = markitdown
+        .convert_bytes(Bytes::from_static(include_bytes!("./test_files/test.docx")), Some(options))
+        .await;
     assert!(result.is_ok());
-    assert!(result.unwrap().is_some());
 }
 
 fn write_to_file(content: &str) {

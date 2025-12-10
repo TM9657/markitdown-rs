@@ -1,3 +1,6 @@
 .DS_Store
 /target
 test.md
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

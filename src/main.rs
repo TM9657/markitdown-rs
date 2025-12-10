@@ -16,7 +16,8 @@ struct Cli {
     format: Option<String>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let output = match cli.output {
@@ -47,34 +48,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert(
-        &input_file,
-        Some(ConversionOptions {
-            file_extension: if format.is_empty() {
-                None
-            } else {
-                Some(format!(".{}", format))
-            },
-            url: None,
-            llm_client: None,
-            llm_model: None,
-        }),
-    )?;
-
-    if let Some(doc_result) = result {
-        if output == "console" {
-            println!("{}", &doc_result.text_content);
-        } else {
-            fs::write(&output, &doc_result.text_content)
-                .map_err(|e| format!("Failed to write to '{}': {}", output, e))?;
-            eprintln!("Successfully converted to: {}", output);
-        }
+    let options = if format.is_empty() {
+        None
     } else {
-        eprintln!(
-            "Error: Unable to convert file '{}'. The file format may not be supported.",
-            input_file
-        );
-        std::process::exit(1);
+        Some(ConversionOptions::default().with_extension(format!(".{}", format)))
+    };
+
+    // Use the async convert_file method for simplicity
+    match markitdown.convert_file(&input_file).await {
+        Ok(markdown) => {
+            if output == "console" {
+                println!("{}", &markdown);
+            } else {
+                fs::write(&output, &markdown)
+                    .map_err(|e| format!("Failed to write to '{}': {}", output, e))?;
+                eprintln!("Successfully converted to: {}", output);
+            }
+        }
+        Err(e) => {
+            // For more control, use the convert method with options
+            if options.is_some() {
+                let bytes = fs::read(&input_file)?;
+                match markitdown
+                    .convert_bytes(bytes::Bytes::from(bytes), options)
+                    .await
+                {
+                    Ok(doc) => {
+                        let markdown = doc.to_markdown();
+                        if output == "console" {
+                            println!("{}", &markdown);
+                        } else {
+                            fs::write(&output, &markdown)
+                                .map_err(|e| format!("Failed to write to '{}': {}", output, e))?;
+                            eprintln!("Successfully converted to: {}", output);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Error: Unable to convert file '{}'. {}",
+                            input_file, e
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                eprintln!(
+                    "Error: Unable to convert file '{}'. {}",
+                    input_file, e
+                );
+                std::process::exit(1);
+            }
+        }
     }
     Ok(())
 }

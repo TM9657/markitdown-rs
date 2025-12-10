@@ -1,128 +1,108 @@
-use calamine::{open_workbook, Reader, Xlsx};
-use std::{io::Cursor, path::Path};
+use async_trait::async_trait;
+use bytes::Bytes;
+use calamine::{Reader, Xlsx};
+use object_store::ObjectStore;
+use std::io::Cursor;
+use std::sync::Arc;
 
 use crate::error::MarkitdownError;
-use crate::model::{ConversionOptions, DocumentConverter, DocumentConverterResult};
+use crate::model::{
+    ContentBlock, ConversionOptions, Document, DocumentConverter, Page,
+};
 
 pub struct ExcelConverter;
 
-impl DocumentConverter for ExcelConverter {
-    fn convert(
-        &self,
-        local_path: &str,
-        args: Option<ConversionOptions>,
-    ) -> Result<DocumentConverterResult, MarkitdownError> {
-        if let Some(opts) = &args {
-            if let Some(ext) = &opts.file_extension {
-                if ext != ".xlsx" && ext != ".xls" {
-                    return Err(MarkitdownError::InvalidFile(
-                        format!("Expected .xlsx or .xls file, got {}", ext)
-                    ));
-                }
-            }
-        }
-
-        let path = Path::new(local_path);
-        println!("Opening file: {:#?}", path);
-        let mut workbook: Xlsx<_> = open_workbook(path)
-            .map_err(|e| MarkitdownError::ParseError(format!("Failed to open Excel file: {}", e)))?;
-        let mut markdown = String::new();
-
-        if let Some(Ok(range)) = workbook.worksheet_range_at(0) {
-            let rows: Vec<Vec<String>> = range
-                .rows()
-                .map(|row| row.iter().map(|cell| cell.to_string()).collect())
-                .collect();
-
-            if rows.is_empty() {
-                return Ok(DocumentConverterResult {
-                    title: None,
-                    text_content: String::new(),
-                });
-            }
-
-            markdown.push_str("|");
-            for cell in &rows[0] {
-                markdown.push_str(&format!(" {} |", cell));
-            }
-            markdown.push_str("\n|");
-
-            for _ in &rows[0] {
-                markdown.push_str(" --- |");
-            }
-            markdown.push_str("\n");
-
-            for row in rows.iter().skip(1) {
-                markdown.push_str("|");
-                for cell in row {
-                    markdown.push_str(&format!(" {} |", cell));
-                }
-                markdown.push_str("\n");
-            }
-        }
-
-        Ok(DocumentConverterResult {
-            title: None,
-            text_content: markdown,
-        })
-    }
-
-    fn convert_bytes(
-        &self,
-        bytes: &[u8],
-        args: Option<ConversionOptions>,
-    ) -> Result<DocumentConverterResult, MarkitdownError> {
-        if let Some(opts) = &args {
-            if let Some(ext) = &opts.file_extension {
-                if ext != ".xlsx" && ext != ".xls" {
-                    return Err(MarkitdownError::InvalidFile(
-                        format!("Expected .xlsx or .xls file, got {}", ext)
-                    ));
-                }
-            }
-        }
+impl ExcelConverter {
+    fn convert_excel_bytes(&self, bytes: &[u8]) -> Result<Document, MarkitdownError> {
         let reader = Cursor::new(bytes);
         let mut workbook: Xlsx<_> = Xlsx::new(reader)
             .map_err(|e| MarkitdownError::ParseError(format!("Failed to open Excel file: {}", e)))?;
 
-        let mut markdown = String::new();
+        let mut document = Document::new();
+        let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
 
-        if let Some(Ok(range)) = workbook.worksheet_range_at(0) {
-            let rows: Vec<Vec<String>> = range
-                .rows()
-                .map(|row| row.iter().map(|cell| cell.to_string()).collect())
-                .collect();
+        for (sheet_idx, sheet_name) in sheet_names.iter().enumerate() {
+            let mut page = Page::new((sheet_idx + 1) as u32);
 
-            if rows.is_empty() {
-                return Ok(DocumentConverterResult {
-                    title: None,
-                    text_content: String::new(),
-                });
-            }
+            // Add sheet name as heading
+            page.add_content(ContentBlock::Heading {
+                level: 2,
+                text: sheet_name.clone(),
+            });
 
-            markdown.push_str("|");
-            for cell in &rows[0] {
-                markdown.push_str(&format!(" {} |", cell));
-            }
-            markdown.push_str("\n|");
+            if let Ok(range) = workbook.worksheet_range(sheet_name) {
+                let rows: Vec<Vec<String>> = range
+                    .rows()
+                    .map(|row| row.iter().map(|cell| cell.to_string()).collect())
+                    .collect();
 
-            for _ in &rows[0] {
-                markdown.push_str(" --- |");
-            }
-            markdown.push_str("\n");
+                if !rows.is_empty() {
+                    let headers = rows[0].clone();
+                    let data_rows: Vec<Vec<String>> = rows.into_iter().skip(1).collect();
 
-            for row in rows.iter().skip(1) {
-                markdown.push_str("|");
-                for cell in row {
-                    markdown.push_str(&format!(" {} |", cell));
+                    page.add_content(ContentBlock::Table {
+                        headers,
+                        rows: data_rows,
+                    });
                 }
-                markdown.push_str("\n");
+            }
+
+            document.add_page(page);
+        }
+
+        // If no sheets found, create empty document
+        if document.pages.is_empty() {
+            document.add_page(Page::new(1));
+        }
+
+        Ok(document)
+    }
+}
+
+#[async_trait]
+impl DocumentConverter for ExcelConverter {
+    async fn convert(
+        &self,
+        store: Arc<dyn ObjectStore>,
+        path: &object_store::path::Path,
+        options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        if let Some(opts) = &options {
+            if let Some(ext) = &opts.file_extension {
+                if ext != ".xlsx" && ext != ".xls" {
+                    return Err(MarkitdownError::InvalidFile(format!(
+                        "Expected .xlsx or .xls file, got {}",
+                        ext
+                    )));
+                }
             }
         }
 
-        Ok(DocumentConverterResult {
-            title: None,
-            text_content: markdown,
-        })
+        let result = store.get(path).await?;
+        let bytes = result.bytes().await?;
+        self.convert_excel_bytes(&bytes)
+    }
+
+    async fn convert_bytes(
+        &self,
+        bytes: Bytes,
+        options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        if let Some(opts) = &options {
+            if let Some(ext) = &opts.file_extension {
+                if ext != ".xlsx" && ext != ".xls" {
+                    return Err(MarkitdownError::InvalidFile(format!(
+                        "Expected .xlsx or .xls file, got {}",
+                        ext
+                    )));
+                }
+            }
+        }
+
+        self.convert_excel_bytes(&bytes)
+    }
+
+    fn supported_extensions(&self) -> &[&str] {
+        &[".xlsx", ".xls"]
     }
 }

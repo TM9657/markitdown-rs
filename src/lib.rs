@@ -10,6 +10,7 @@ pub mod pdf;
 pub mod pptx;
 pub mod rss;
 
+use bytes::Bytes;
 use csv::CsvConverter;
 use docx::DocxConverter;
 use error::MarkitdownError;
@@ -18,25 +19,41 @@ use html::HtmlConverter;
 use image::ImageConverter;
 use infer;
 use mime_guess::MimeGuess;
-use model::{ConversionOptions, DocumentConverter, DocumentConverterResult};
+use model::{ConversionOptions, Document, DocumentConverter, DocumentConverterResult};
+use object_store::local::LocalFileSystem;
+use object_store::memory::InMemory;
+use object_store::ObjectStore;
 use pdf::PdfConverter;
 use pptx::PptxConverter;
 use rss::RssConverter;
 use std::io::Cursor;
 use std::io::Read;
-use std::{collections::HashMap, path::Path};
-use std::{fs, io};
-use tempfile::tempdir;
+use std::path::Path;
+use std::sync::Arc;
+use std::{collections::HashMap, fs};
 use zip::ZipArchive;
 
+// Re-export key types
+pub use llm::{GenericLlmClient, LlmClient, LlmConfig, LlmProvider};
+pub use model::{ContentBlock, ExtractedImage, Page};
+
+/// Main interface for converting documents to markdown
 pub struct MarkItDown {
     converters: Vec<Box<dyn DocumentConverter>>,
+    store: Arc<dyn ObjectStore>,
 }
 
 impl MarkItDown {
+    /// Create a new MarkItDown instance with local filesystem storage
     pub fn new() -> Self {
+        Self::with_store(Arc::new(LocalFileSystem::new()))
+    }
+
+    /// Create a new MarkItDown instance with a custom object store
+    pub fn with_store(store: Arc<dyn ObjectStore>) -> Self {
         let mut md = MarkItDown {
             converters: Vec::new(),
+            store,
         };
 
         md.register_converter(Box::new(CsvConverter));
@@ -51,8 +68,18 @@ impl MarkItDown {
         md
     }
 
+    /// Create a new MarkItDown instance with in-memory storage (useful for bytes)
+    pub fn in_memory() -> Self {
+        Self::with_store(Arc::new(InMemory::new()))
+    }
+
     pub fn register_converter(&mut self, converter: Box<dyn DocumentConverter>) {
         self.converters.insert(0, converter);
+    }
+
+    /// Get the object store
+    pub fn store(&self) -> Arc<dyn ObjectStore> {
+        self.store.clone()
     }
 
     fn get_file_type_map() -> HashMap<&'static str, Vec<&'static str>> {
@@ -79,6 +106,7 @@ impl MarkItDown {
         map
     }
 
+    /// Detect file type from path
     pub fn detect_file_type(&self, file_path: &str) -> Option<String> {
         if let Some(kind) = infer::get_from_path(file_path).ok().flatten() {
             return Some(format!(".{}", kind.extension()));
@@ -90,7 +118,7 @@ impl MarkItDown {
             }
         }
 
-        if let Ok(_content) = std::fs::read(file_path) {
+        if let Ok(_content) = fs::read(file_path) {
             if let Some(mime) = MimeGuess::from_path(file_path).first() {
                 let mime_str = mime.to_string();
                 if let Some(extensions) = Self::get_file_type_map().get(mime_str.as_str()) {
@@ -102,176 +130,250 @@ impl MarkItDown {
         None
     }
 
+    /// Detect file type from bytes
     pub fn detect_bytes(&self, bytes: &[u8]) -> Option<String> {
         if let Some(kind) = infer::get(bytes) {
             return Some(format!(".{}", kind.extension()));
         }
-
         None
     }
 
-    pub fn convert(
-        &self,
-        source: &str,
-        mut args: Option<ConversionOptions>,
-    ) -> Result<Option<DocumentConverterResult>, MarkitdownError> {
-        if let Some(ref mut options) = args {
-            if options.file_extension.is_none() {
-                options.file_extension = self.detect_file_type(source);
-            }
-        } else {
-            args = Some(ConversionOptions {
-                file_extension: self.detect_file_type(source),
-                url: None,
-                llm_client: None,
-                llm_model: None,
-            });
-        }
-
-        if let Some(opts) = &args {
-            if let Some(ext) = &opts.file_extension {
-                if ext == ".zip" {
-                    let data = fs::read(source)?;
-                    let cursor = Cursor::new(data);
-                    let mut archive = ZipArchive::new(cursor)?;
-
-                    let zip_name = Path::new(source)
-                        .file_name()
-                        .ok_or_else(|| {
-                            MarkitdownError::InvalidFile("No filename found".to_string())
-                        })?
-                        .to_str()
-                        .ok_or_else(|| {
-                            MarkitdownError::InvalidFile("Invalid filename encoding".to_string())
-                        })?;
-                    let mut markdown =
-                        String::from(format!("Content from the zip file {}\n", zip_name).as_str());
-
-                    for i in 0..archive.len() {
-                        let mut file = archive.by_index(i)?;
-                        let file_name = file.name().to_string();
-                        let dir = tempdir()?;
-                        let file_path = dir.path().join(&file_name);
-                        let mut temp_file = fs::File::create(&file_path)?;
-                        io::copy(&mut file, &mut temp_file)?;
-                        for converter in &self.converters {
-                            let file_args = Some(ConversionOptions {
-                                file_extension: self.detect_file_type(
-                                    file_path.to_str().ok_or_else(|| {
-                                        MarkitdownError::InvalidFile(
-                                            "Invalid path encoding".to_string(),
-                                        )
-                                    })?,
-                                ),
-                                url: None,
-                                llm_client: None,
-                                llm_model: None,
-                            });
-                            match converter.convert(
-                                file_path.to_str().ok_or_else(|| {
-                                    MarkitdownError::InvalidFile(
-                                        "Invalid path encoding".to_string(),
-                                    )
-                                })?,
-                                file_args.clone(),
-                            ) {
-                                Ok(result) => {
-                                    markdown.push_str(
-                                        format!("\n## File: {}\n\n", &file_name).as_str(),
-                                    );
-                                    markdown
-                                        .push_str(format!("{}\n", result.text_content).as_str());
-                                }
-                                Err(_) => {} // Skip if converter can't handle this file
-                            }
-                        }
-
-                        std::fs::remove_file(&file_path)?;
-                    }
-                    return Ok(Some(DocumentConverterResult {
-                        title: None,
-                        text_content: markdown,
-                    }));
-                }
-            }
-        }
-
+    /// Find the appropriate converter for an extension
+    fn find_converter(&self, extension: &str) -> Option<&dyn DocumentConverter> {
+        let ext = extension.trim_start_matches('.');
         for converter in &self.converters {
-            match converter.convert(source, args.clone()) {
-                Ok(result) => return Ok(Some(result)),
-                Err(_) => continue, // Try next converter
+            if converter.can_handle(ext) {
+                return Some(converter.as_ref());
             }
         }
-        Ok(None)
+        None
     }
 
-    pub fn convert_bytes(
+    /// Convert a file from the object store to a Document
+    pub async fn convert(
         &self,
-        bytes: &[u8],
-        mut args: Option<ConversionOptions>,
-    ) -> Result<Option<DocumentConverterResult>, MarkitdownError> {
-        if let Some(ref mut options) = args {
-            if options.file_extension.is_none() {
-                options.file_extension = self.detect_bytes(bytes);
+        path: &str,
+        mut options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        // Detect extension if not provided
+        let extension = if let Some(ref opts) = options {
+            opts.file_extension.clone()
+        } else {
+            None
+        }
+        .or_else(|| self.detect_file_type(path));
+
+        if let Some(ref mut opts) = options {
+            if opts.file_extension.is_none() {
+                opts.file_extension = extension.clone();
             }
         } else {
-            args = Some(ConversionOptions {
-                file_extension: self.detect_bytes(bytes),
-                url: None,
-                llm_client: None,
-                llm_model: None,
-            });
+            options = Some(ConversionOptions::default().with_extension(
+                extension.clone().unwrap_or_default(),
+            ));
         }
 
-        if let Some(opts) = &args {
-            if let Some(ext) = &opts.file_extension {
-                if ext == ".zip" {
-                    let cursor = Cursor::new(bytes);
-                    let mut archive = ZipArchive::new(cursor)?;
+        let ext = extension.as_deref().unwrap_or("");
 
-                    let mut markdown = String::from("");
+        // Handle ZIP files specially
+        if ext == ".zip" || ext == "zip" {
+            return self.convert_zip_file(path, options).await;
+        }
 
-                    for i in 0..archive.len() {
-                        let mut file = archive.by_index(i)?;
-                        let file_name = file.name().to_string();
+        // Find converter
+        if let Some(converter) = self.find_converter(ext) {
+            // Check if the path is a local file - if so, read it and use convert_bytes
+            // This makes local file handling work seamlessly with any ObjectStore
+            let local_path = Path::new(path);
+            if local_path.exists() {
+                let bytes = fs::read(path)?;
+                return converter.convert_bytes(Bytes::from(bytes), options).await;
+            }
+            
+            // Otherwise, use the object store
+            let obj_path = object_store::path::Path::from(path);
+            return converter.convert(self.store.clone(), &obj_path, options).await;
+        }
 
-                        // Read file contents into memory
-                        let mut file_contents = Vec::new();
-                        file.read_to_end(&mut file_contents)?;
+        Err(MarkitdownError::UnsupportedFormat(format!(
+            "No converter found for extension: {}",
+            ext
+        )))
+    }
 
-                        for converter in &self.converters {
-                            let file_args = Some(ConversionOptions {
-                                file_extension: self.detect_file_type(&file_name),
-                                url: None,
-                                llm_client: None,
-                                llm_model: None,
+    /// Convert bytes directly to a Document
+    pub async fn convert_bytes(
+        &self,
+        bytes: Bytes,
+        mut options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        // Detect extension if not provided
+        let extension = if let Some(ref opts) = options {
+            opts.file_extension.clone()
+        } else {
+            None
+        }
+        .or_else(|| self.detect_bytes(&bytes));
+
+        if let Some(ref mut opts) = options {
+            if opts.file_extension.is_none() {
+                opts.file_extension = extension.clone();
+            }
+        } else {
+            options = Some(ConversionOptions::default().with_extension(
+                extension.clone().unwrap_or_default(),
+            ));
+        }
+
+        let ext = extension.as_deref().unwrap_or("");
+
+        // Handle ZIP files specially
+        if ext == ".zip" || ext == "zip" {
+            return self.convert_zip_bytes(&bytes, options).await;
+        }
+
+        // Find converter
+        if let Some(converter) = self.find_converter(ext) {
+            return converter.convert_bytes(bytes, options).await;
+        }
+
+        Err(MarkitdownError::UnsupportedFormat(format!(
+            "No converter found for extension: {}",
+            ext
+        )))
+    }
+
+    /// Convert a local file to markdown (convenience method)
+    pub async fn convert_file(&self, file_path: &str) -> Result<String, MarkitdownError> {
+        // Read file and convert
+        let bytes = fs::read(file_path)?;
+        let extension = self.detect_file_type(file_path);
+        let options = extension.map(|ext| ConversionOptions::default().with_extension(ext));
+
+        let document = self.convert_bytes(Bytes::from(bytes), options).await?;
+        Ok(document.to_markdown())
+    }
+
+    /// Convert bytes to a legacy DocumentConverterResult
+    pub async fn convert_bytes_legacy(
+        &self,
+        bytes: &[u8],
+        options: Option<ConversionOptions>,
+    ) -> Result<Option<DocumentConverterResult>, MarkitdownError> {
+        match self.convert_bytes(Bytes::copy_from_slice(bytes), options).await {
+            Ok(doc) => Ok(Some(DocumentConverterResult::from(doc))),
+            Err(MarkitdownError::UnsupportedFormat(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Convert a file to a legacy DocumentConverterResult
+    pub async fn convert_legacy(
+        &self,
+        source: &str,
+        options: Option<ConversionOptions>,
+    ) -> Result<Option<DocumentConverterResult>, MarkitdownError> {
+        // Read file bytes and convert
+        let bytes = fs::read(source)?;
+        let mut opts = options.unwrap_or_default();
+        if opts.file_extension.is_none() {
+            opts.file_extension = self.detect_file_type(source);
+        }
+
+        match self.convert_bytes(Bytes::from(bytes), Some(opts)).await {
+            Ok(doc) => Ok(Some(DocumentConverterResult::from(doc))),
+            Err(MarkitdownError::UnsupportedFormat(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Convert a ZIP file by extracting and converting each file
+    async fn convert_zip_file(
+        &self,
+        path: &str,
+        _options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        let data = fs::read(path)?;
+        self.convert_zip_bytes(&data, _options).await
+    }
+
+    /// Convert ZIP bytes
+    async fn convert_zip_bytes(
+        &self,
+        bytes: &[u8],
+        options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        let cursor = Cursor::new(bytes);
+        let mut archive = ZipArchive::new(cursor)?;
+
+        let mut document = Document::new();
+        document.title = Some("ZIP Archive Contents".to_string());
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let file_name = file.name().to_string();
+
+            // Skip directories
+            if file.is_dir() {
+                continue;
+            }
+
+            // Read file contents
+            let mut file_contents = Vec::new();
+            file.read_to_end(&mut file_contents)?;
+
+            // Detect file type
+            let ext = self
+                .detect_bytes(&file_contents)
+                .or_else(|| {
+                    Path::new(&file_name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|s| format!(".{}", s.to_lowercase()))
+                });
+
+            if let Some(extension) = ext {
+                let file_opts = options.clone().map(|mut o| {
+                    o.file_extension = Some(extension.clone());
+                    o
+                }).or_else(|| Some(ConversionOptions::default().with_extension(extension.clone())));
+
+                if let Some(converter) = self.find_converter(&extension) {
+                    match converter
+                        .convert_bytes(Bytes::from(file_contents), file_opts)
+                        .await
+                    {
+                        Ok(file_doc) => {
+                            // Add file header as first page or merge with existing
+                            let mut page = Page::new((document.pages.len() + 1) as u32);
+                            page.add_content(ContentBlock::Heading {
+                                level: 2,
+                                text: format!("File: {}", file_name),
                             });
-                            match converter.convert_bytes(&file_contents, file_args.clone()) {
-                                Ok(result) => {
-                                    markdown.push_str(
-                                        format!("\n## File: {}\n\n", &file_name).as_str(),
-                                    );
-                                    markdown
-                                        .push_str(format!("{}\n", result.text_content).as_str());
+
+                            // Add content from converted document
+                            for file_page in file_doc.pages {
+                                for block in file_page.content {
+                                    page.add_content(block);
                                 }
-                                Err(_) => {} // Skip if converter can't handle this file
                             }
+
+                            document.add_page(page);
+                        }
+                        Err(_) => {
+                            // Skip files we can't convert
                         }
                     }
-                    return Ok(Some(DocumentConverterResult {
-                        title: None,
-                        text_content: markdown,
-                    }));
                 }
             }
         }
 
-        for converter in &self.converters {
-            match converter.convert_bytes(bytes, args.clone()) {
-                Ok(result) => return Ok(Some(result)),
-                Err(_) => continue, // Try next converter
-            }
-        }
-        Ok(None)
+        Ok(document)
+    }
+}
+
+impl Default for MarkItDown {
+    fn default() -> Self {
+        Self::new()
     }
 }

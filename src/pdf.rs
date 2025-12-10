@@ -1,73 +1,89 @@
+use async_trait::async_trait;
+use bytes::Bytes;
+use object_store::ObjectStore;
 use pdf_extract;
+use std::sync::Arc;
 
 use crate::error::MarkitdownError;
-use crate::model::{ConversionOptions, DocumentConverter, DocumentConverterResult};
+use crate::model::{ContentBlock, ConversionOptions, Document, DocumentConverter, Page};
 
 pub struct PdfConverter;
 
-impl DocumentConverter for PdfConverter {
-    fn convert(
-        &self,
-        local_path: &str,
-        args: Option<ConversionOptions>,
-    ) -> Result<DocumentConverterResult, MarkitdownError> {
-        if let Some(opts) = &args {
-            if let Some(ext) = &opts.file_extension {
-                if ext != ".pdf" {
-                    return Err(MarkitdownError::InvalidFile(
-                        format!("Expected .pdf file, got {}", ext)
-                    ));
-                }
+impl PdfConverter {
+    fn convert_pdf_bytes(&self, bytes: &[u8]) -> Result<Document, MarkitdownError> {
+        let text_content = pdf_extract::extract_text_from_mem(bytes).map_err(|e| {
+            MarkitdownError::ParseError(format!("Failed to extract text from PDF: {}", e))
+        })?;
+
+        let mut document = Document::new();
+
+        // Split text by page markers or just create a single page
+        let pages: Vec<&str> = text_content.split("\x0c").collect(); // Form feed often separates pages
+
+        for (idx, page_text) in pages.iter().enumerate() {
+            let trimmed = page_text.trim();
+            if !trimmed.is_empty() {
+                let mut page = Page::new((idx + 1) as u32);
+                page.add_content(ContentBlock::Text(trimmed.to_string()));
+                document.add_page(page);
             }
         }
 
-        let bytes = std::fs::read(local_path)?;
-        let text_content = pdf_extract::extract_text_from_mem(&bytes)
-            .map_err(|e| MarkitdownError::ParseError(format!("Failed to extract text from PDF: {}", e)))?;
-        Ok(DocumentConverterResult {
-            title: None,
-            text_content,
-        })
+        // If no pages were created, create at least one with the full content
+        if document.pages.is_empty() {
+            let mut page = Page::new(1);
+            page.add_content(ContentBlock::Text(text_content));
+            document.add_page(page);
+        }
 
-        // match Document::load(local_path) {
-        //     Ok(doc) => {
-        //         let mut text_content = String::new();
-
-        //         for page_num in 1..=doc.get_pages().len() {
-        //             if let Ok(text) = doc.extract_text(&[page_num.try_into().unwrap()]) {
-        //                 text_content.push_str(&text);
-        //                 text_content.push_str("\n\n");
-        //             }
-        //         }
-
-        //         Some(DocumentConverterResult {
-        //             title: None,
-        //             text_content,
-        //         })
-        //     }
-        //     Err(_) => None,
-        // }
+        Ok(document)
     }
-    fn convert_bytes(
+}
+
+#[async_trait]
+impl DocumentConverter for PdfConverter {
+    async fn convert(
         &self,
-        bytes: &[u8],
-        args: Option<ConversionOptions>,
-    ) -> Result<DocumentConverterResult, MarkitdownError> {
-        if let Some(opts) = &args {
+        store: Arc<dyn ObjectStore>,
+        path: &object_store::path::Path,
+        options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        if let Some(opts) = &options {
             if let Some(ext) = &opts.file_extension {
                 if ext != ".pdf" {
-                    return Err(MarkitdownError::InvalidFile(
-                        format!("Expected .pdf file, got {}", ext)
-                    ));
+                    return Err(MarkitdownError::InvalidFile(format!(
+                        "Expected .pdf file, got {}",
+                        ext
+                    )));
                 }
             }
         }
 
-        let text_content = pdf_extract::extract_text_from_mem(bytes)
-            .map_err(|e| MarkitdownError::ParseError(format!("Failed to extract text from PDF: {}", e)))?;
-        Ok(DocumentConverterResult {
-            title: None,
-            text_content,
-        })
+        let result = store.get(path).await?;
+        let bytes = result.bytes().await?;
+        self.convert_pdf_bytes(&bytes)
+    }
+
+    async fn convert_bytes(
+        &self,
+        bytes: Bytes,
+        options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        if let Some(opts) = &options {
+            if let Some(ext) = &opts.file_extension {
+                if ext != ".pdf" {
+                    return Err(MarkitdownError::InvalidFile(format!(
+                        "Expected .pdf file, got {}",
+                        ext
+                    )));
+                }
+            }
+        }
+
+        self.convert_pdf_bytes(&bytes)
+    }
+
+    fn supported_extensions(&self) -> &[&str] {
+        &[".pdf"]
     }
 }

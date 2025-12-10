@@ -1,180 +1,198 @@
-use crate::error::MarkitdownError;
-use crate::model::{ConversionOptions, DocumentConverter, DocumentConverterResult};
+use async_trait::async_trait;
+use bytes::Bytes;
 use docx_rust::{
     document::{BodyContent, TableCellContent, TableRowContent},
     DocxFile,
 };
-use std::fs;
-use std::io::Cursor;
+use object_store::ObjectStore;
+use std::io::{Cursor, Read};
+use std::sync::Arc;
+use zip::ZipArchive;
+
+use crate::error::MarkitdownError;
+use crate::model::{
+    ContentBlock, ConversionOptions, Document, DocumentConverter, ExtractedImage, Page,
+};
 
 pub struct DocxConverter;
 
-impl DocumentConverter for DocxConverter {
-    fn convert(
-        &self,
-        local_path: &str,
-        args: Option<ConversionOptions>,
-    ) -> Result<DocumentConverterResult, MarkitdownError> {
-        if let Some(opts) = &args {
-            if let Some(ext) = &opts.file_extension {
-                if ext != ".docx" {
-                    return Err(MarkitdownError::InvalidFile(
-                        format!("Expected .docx file, got {}", ext)
-                    ));
-                }
-            }
-        }
-
-        fs::metadata(local_path)?;
-
-        let docx_file = DocxFile::from_file(local_path)
-            .map_err(|e| MarkitdownError::ParseError(format!("Failed to read DOCX file: {}", e)))?;
-        let doc = docx_file.parse()
-            .map_err(|e| MarkitdownError::ParseError(format!("Failed to parse DOCX file: {}", e)))?;
-
-        let mut markdown = String::new();
-
-        for content in doc.document.body.content {
-            match content {
-                BodyContent::Paragraph(paragraph) => {
-                    for text in paragraph.iter_text() {
-                        markdown.push_str(&text.to_string());
-                        markdown.push_str("\n");
-                    }
-                }
-                BodyContent::Table(table) => {
-                    markdown.push_str("|");
-                    for cell in table.rows[0].cells.iter() {
-                        match &cell {
-                            TableRowContent::TableCell(tc) => {
-                                tc.content.iter().for_each(|content| match content {
-                                    TableCellContent::Paragraph(paragraph) => {
-                                        for text in paragraph.iter_text() {
-                                            markdown.push_str(&format!(" {} |", text));
-                                        }
-                                    }
-                                })
-                            }
-                            _ => {}
-                        }
-                    }
-                    markdown.push_str("\n|");
-
-                    for _ in table.rows[0].cells.iter() {
-                        markdown.push_str(" --- |");
-                    }
-                    markdown.push_str("\n");
-
-                    for row in table.rows.iter().skip(1) {
-                        markdown.push_str("|");
-                        for cell in row.cells.iter() {
-                            match &cell {
-                                TableRowContent::TableCell(tc) => {
-                                    tc.content.iter().for_each(|content| match content {
-                                        TableCellContent::Paragraph(paragraph) => {
-                                            for text in paragraph.iter_text() {
-                                                markdown.push_str(&format!(" {} |", text));
-                                            }
-                                        }
-                                    })
-                                }
-                                _ => {}
-                            }
-                        }
-                        markdown.push_str("\n");
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(DocumentConverterResult {
-            title: None,
-            text_content: markdown,
-        })
-    }
-
-    fn convert_bytes(
+impl DocxConverter {
+    fn convert_docx_bytes(
         &self,
         bytes: &[u8],
-        args: Option<ConversionOptions>,
-    ) -> Result<DocumentConverterResult, MarkitdownError> {
-        if let Some(opts) = &args {
-            if let Some(ext) = &opts.file_extension {
-                if ext != ".docx" {
-                    return Err(MarkitdownError::InvalidFile(
-                        format!("Expected .docx file, got {}", ext)
-                    ));
-                }
-            }
-        }
-
+        extract_images: bool,
+    ) -> Result<Document, MarkitdownError> {
         let reader = Cursor::new(bytes);
 
         let docx_file = DocxFile::from_reader(reader)
             .map_err(|e| MarkitdownError::ParseError(format!("Failed to read DOCX file: {}", e)))?;
-        let doc = docx_file.parse()
+        let doc = docx_file
+            .parse()
             .map_err(|e| MarkitdownError::ParseError(format!("Failed to parse DOCX file: {}", e)))?;
 
-        let mut markdown = String::new();
+        let mut document = Document::new();
+        let mut page = Page::new(1);
 
+        // Extract images from the DOCX file if requested
+        if extract_images {
+            let images = self.extract_images_from_docx(bytes)?;
+            for img in images {
+                page.add_content(ContentBlock::Image(img));
+            }
+        }
+
+        // Process document content
         for content in doc.document.body.content {
             match content {
                 BodyContent::Paragraph(paragraph) => {
-                    for text in paragraph.iter_text() {
-                        markdown.push_str(&text.to_string());
-                        markdown.push_str("\n");
+                    let mut text = String::new();
+                    for t in paragraph.iter_text() {
+                        text.push_str(&t.to_string());
+                    }
+                    if !text.trim().is_empty() {
+                        page.add_content(ContentBlock::Text(text));
                     }
                 }
                 BodyContent::Table(table) => {
-                    markdown.push_str("|");
-                    for cell in table.rows[0].cells.iter() {
-                        match &cell {
-                            TableRowContent::TableCell(tc) => {
-                                tc.content.iter().for_each(|content| match content {
-                                    TableCellContent::Paragraph(paragraph) => {
+                    if !table.rows.is_empty() {
+                        let mut headers: Vec<String> = Vec::new();
+                        let mut rows: Vec<Vec<String>> = Vec::new();
+
+                        // First row as headers
+                        for cell in table.rows[0].cells.iter() {
+                            if let TableRowContent::TableCell(tc) = cell {
+                                let mut cell_text = String::new();
+                                for content in &tc.content {
+                                    let TableCellContent::Paragraph(paragraph) = content;
+                                    for text in paragraph.iter_text() {
+                                        cell_text.push_str(&text.to_string());
+                                    }
+                                }
+                                headers.push(cell_text);
+                            }
+                        }
+
+                        // Remaining rows as data
+                        for row in table.rows.iter().skip(1) {
+                            let mut row_data: Vec<String> = Vec::new();
+                            for cell in row.cells.iter() {
+                                if let TableRowContent::TableCell(tc) = cell {
+                                    let mut cell_text = String::new();
+                                    for content in &tc.content {
+                                        let TableCellContent::Paragraph(paragraph) = content;
                                         for text in paragraph.iter_text() {
-                                            markdown.push_str(&format!(" {} |", text));
+                                            cell_text.push_str(&text.to_string());
                                         }
                                     }
-                                })
-                            }
-                            _ => {}
-                        }
-                    }
-                    markdown.push_str("\n|");
-
-                    for _ in table.rows[0].cells.iter() {
-                        markdown.push_str(" --- |");
-                    }
-                    markdown.push_str("\n");
-
-                    for row in table.rows.iter().skip(1) {
-                        markdown.push_str("|");
-                        for cell in row.cells.iter() {
-                            match &cell {
-                                TableRowContent::TableCell(tc) => {
-                                    tc.content.iter().for_each(|content| match content {
-                                        TableCellContent::Paragraph(paragraph) => {
-                                            for text in paragraph.iter_text() {
-                                                markdown.push_str(&format!(" {} |", text));
-                                            }
-                                        }
-                                    })
+                                    row_data.push(cell_text);
                                 }
-                                _ => {}
                             }
+                            rows.push(row_data);
                         }
-                        markdown.push_str("\n");
+
+                        page.add_content(ContentBlock::Table { headers, rows });
                     }
                 }
                 _ => {}
             }
         }
 
-        Ok(DocumentConverterResult {
-            title: None,
-            text_content: markdown,
-        })
+        document.add_page(page);
+        Ok(document)
+    }
+
+    fn extract_images_from_docx(&self, bytes: &[u8]) -> Result<Vec<ExtractedImage>, MarkitdownError> {
+        let mut images = Vec::new();
+        let cursor = Cursor::new(bytes);
+        let mut archive = ZipArchive::new(cursor)?;
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let name = file.name().to_string();
+
+            // Check if this is an image file in the media folder
+            if name.starts_with("word/media/") {
+                let mime_type = if name.ends_with(".png") {
+                    "image/png"
+                } else if name.ends_with(".jpg") || name.ends_with(".jpeg") {
+                    "image/jpeg"
+                } else if name.ends_with(".gif") {
+                    "image/gif"
+                } else if name.ends_with(".webp") {
+                    "image/webp"
+                } else if name.ends_with(".emf") || name.ends_with(".wmf") {
+                    continue; // Skip Windows metafiles
+                } else {
+                    continue;
+                };
+
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+
+                let image_name = name
+                    .strip_prefix("word/media/")
+                    .unwrap_or(&name)
+                    .to_string();
+
+                images.push(ExtractedImage::new(
+                    image_name,
+                    Bytes::from(data),
+                    mime_type,
+                ));
+            }
+        }
+
+        Ok(images)
+    }
+}
+
+#[async_trait]
+impl DocumentConverter for DocxConverter {
+    async fn convert(
+        &self,
+        store: Arc<dyn ObjectStore>,
+        path: &object_store::path::Path,
+        options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        if let Some(opts) = &options {
+            if let Some(ext) = &opts.file_extension {
+                if ext != ".docx" {
+                    return Err(MarkitdownError::InvalidFile(format!(
+                        "Expected .docx file, got {}",
+                        ext
+                    )));
+                }
+            }
+        }
+
+        let extract_images = options.as_ref().map(|o| o.extract_images).unwrap_or(true);
+
+        let result = store.get(path).await?;
+        let bytes = result.bytes().await?;
+        self.convert_docx_bytes(&bytes, extract_images)
+    }
+
+    async fn convert_bytes(
+        &self,
+        bytes: Bytes,
+        options: Option<ConversionOptions>,
+    ) -> Result<Document, MarkitdownError> {
+        if let Some(opts) = &options {
+            if let Some(ext) = &opts.file_extension {
+                if ext != ".docx" {
+                    return Err(MarkitdownError::InvalidFile(format!(
+                        "Expected .docx file, got {}",
+                        ext
+                    )));
+                }
+            }
+        }
+
+        let extract_images = options.as_ref().map(|o| o.extract_images).unwrap_or(true);
+        self.convert_docx_bytes(&bytes, extract_images)
+    }
+
+    fn supported_extensions(&self) -> &[&str] {
+        &[".docx"]
     }
 }
