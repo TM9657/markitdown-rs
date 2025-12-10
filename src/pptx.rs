@@ -72,10 +72,9 @@ impl PptxConverter {
         loop {
             let mut found_tables: Vec<TableStat> = Vec::new();
             buf.clear();
-            match reader
-                .read_event_into(&mut buf)
-                .map_err(|e| MarkitdownError::ParseError(format!("Failed to read XML event: {}", e)))?
-            {
+            match reader.read_event_into(&mut buf).map_err(|e| {
+                MarkitdownError::ParseError(format!("Failed to read XML event: {}", e))
+            })? {
                 Event::Start(element) => {
                     if element.name().as_ref() == b"p:txBody" {
                         let mut text_content = String::new();
@@ -232,10 +231,7 @@ impl PptxConverter {
         let cursor = Cursor::new(bytes);
         let mut archive = ZipArchive::new(cursor)?;
 
-        let extract_images = options
-            .as_ref()
-            .map(|o| o.extract_images)
-            .unwrap_or(true);
+        let extract_images = options.as_ref().map(|o| o.extract_images).unwrap_or(true);
 
         // Extract images from media folder
         let cursor2 = Cursor::new(bytes);
@@ -263,9 +259,9 @@ impl PptxConverter {
         slide_files.sort();
 
         for slide_path in slide_files {
-            let mut file = archive.by_name(&slide_path).map_err(|e| {
-                MarkitdownError::Zip(format!("Failed to access slide: {}", e))
-            })?;
+            let mut file = archive
+                .by_name(&slide_path)
+                .map_err(|e| MarkitdownError::Zip(format!("Failed to access slide: {}", e)))?;
 
             let mut content = String::new();
             file.read_to_string(&mut content)

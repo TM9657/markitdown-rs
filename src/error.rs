@@ -98,4 +98,3 @@ impl From<&str> for MarkitdownError {
         MarkitdownError::Conversion(error.to_string())
     }
 }
-

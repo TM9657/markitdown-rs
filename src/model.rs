@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::error::MarkitdownError;
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, SharedLlmClient};
 
 /// Represents an extracted image from a document
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,9 +56,7 @@ impl ExtractedImage {
 
     /// Get the description or fallback to alt_text
     pub fn get_display_text(&self) -> Option<&str> {
-        self.description
-            .as_deref()
-            .or(self.alt_text.as_deref())
+        self.description.as_deref().or(self.alt_text.as_deref())
     }
 }
 
@@ -79,7 +77,10 @@ pub enum ContentBlock {
     /// A list (ordered or unordered)
     List { ordered: bool, items: Vec<String> },
     /// A code block with optional language
-    Code { language: Option<String>, code: String },
+    Code {
+        language: Option<String>,
+        code: String,
+    },
     /// A blockquote
     Quote(String),
     /// Raw markdown (already formatted)
@@ -106,7 +107,13 @@ impl ContentBlock {
                 md.push_str("| ");
                 md.push_str(&headers.join(" | "));
                 md.push_str(" |\n| ");
-                md.push_str(&headers.iter().map(|_| "---").collect::<Vec<_>>().join(" | "));
+                md.push_str(
+                    &headers
+                        .iter()
+                        .map(|_| "---")
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                );
                 md.push_str(" |\n");
                 for row in rows {
                     md.push_str("| ");
@@ -127,11 +134,7 @@ impl ContentBlock {
                 md
             }
             ContentBlock::Code { language, code } => {
-                format!(
-                    "```{}\n{}\n```\n",
-                    language.as_deref().unwrap_or(""),
-                    code
-                )
+                format!("```{}\n{}\n```\n", language.as_deref().unwrap_or(""), code)
             }
             ContentBlock::Quote(text) => {
                 text.lines()
@@ -191,21 +194,52 @@ impl Page {
     }
 
     /// Create a new page with images replaced by their LLM descriptions
+    /// Uses batch processing based on the LLM client's images_per_message setting
     pub async fn with_image_descriptions(
         &self,
         llm_client: &dyn LlmClient,
     ) -> Result<Page, MarkitdownError> {
-        let mut new_page = Page::new(self.page_number);
+        // Collect images that need descriptions
+        let images_to_describe: Vec<(usize, &ExtractedImage)> = self
+            .content
+            .iter()
+            .enumerate()
+            .filter_map(|(i, block)| {
+                if let ContentBlock::Image(img) = block {
+                    if img.description.is_none() {
+                        return Some((i, img));
+                    }
+                }
+                None
+            })
+            .collect();
 
-        for block in &self.content {
+        // If no images need descriptions, return a clone
+        if images_to_describe.is_empty() {
+            return Ok(self.clone());
+        }
+
+        // Prepare batch data
+        let image_data: Vec<(&[u8], &str)> = images_to_describe
+            .iter()
+            .map(|(_, img)| (img.data.as_ref(), img.mime_type.as_str()))
+            .collect();
+
+        // Get descriptions in batch
+        let descriptions = llm_client.describe_images_batch(&image_data).await?;
+
+        // Build the new page with descriptions
+        let mut new_page = Page::new(self.page_number);
+        let mut desc_iter = descriptions.into_iter();
+        let mut image_indices: std::collections::HashSet<usize> =
+            images_to_describe.iter().map(|(i, _)| *i).collect();
+
+        for (i, block) in self.content.iter().enumerate() {
             match block {
-                ContentBlock::Image(img) => {
+                ContentBlock::Image(img) if image_indices.remove(&i) => {
                     let mut new_img = img.clone();
-                    if new_img.description.is_none() {
-                        if let Ok(desc) = llm_client.describe_image(&img.data, &img.mime_type).await
-                        {
-                            new_img.description = Some(desc);
-                        }
+                    if let Some(desc) = desc_iter.next() {
+                        new_img.description = Some(desc);
                     }
                     new_page.add_content(ContentBlock::Image(new_img));
                 }
@@ -354,7 +388,7 @@ pub struct ConversionOptions {
     /// Source URL if applicable
     pub url: Option<String>,
     /// Optional LLM client for image descriptions
-    pub llm_client: Option<Arc<dyn LlmClient>>,
+    pub llm_client: Option<SharedLlmClient>,
     /// Whether to extract images
     pub extract_images: bool,
 }
@@ -364,7 +398,10 @@ impl std::fmt::Debug for ConversionOptions {
         f.debug_struct("ConversionOptions")
             .field("file_extension", &self.file_extension)
             .field("url", &self.url)
-            .field("llm_client", &self.llm_client.as_ref().map(|_| "<LlmClient>"))
+            .field(
+                "llm_client",
+                &self.llm_client.as_ref().map(|_| "<LlmClient>"),
+            )
             .field("extract_images", &self.extract_images)
             .finish()
     }
@@ -391,7 +428,7 @@ impl ConversionOptions {
         self
     }
 
-    pub fn with_llm(mut self, client: Arc<dyn LlmClient>) -> Self {
+    pub fn with_llm(mut self, client: SharedLlmClient) -> Self {
         self.llm_client = Some(client);
         self
     }
@@ -426,8 +463,10 @@ pub trait DocumentConverter: Send + Sync {
     /// Check if this converter can handle the given extension
     fn can_handle(&self, extension: &str) -> bool {
         let ext_normalized = extension.trim_start_matches('.');
-        self.supported_extensions()
-            .iter()
-            .any(|supported| supported.trim_start_matches('.').eq_ignore_ascii_case(ext_normalized))
+        self.supported_extensions().iter().any(|supported| {
+            supported
+                .trim_start_matches('.')
+                .eq_ignore_ascii_case(ext_normalized)
+        })
     }
 }

@@ -12,7 +12,9 @@ async fn test_docx_conversion() {
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert("tests/test_files/test.docx", Some(options)).await;
+    let result = markitdown
+        .convert("tests/test_files/test.docx", Some(options))
+        .await;
     assert!(result.is_ok());
     let unwrapped_result = result.unwrap();
     write_to_file(&unwrapped_result.to_markdown());
@@ -30,7 +32,10 @@ async fn test_docx_bytes_conversion() {
     let markitdown = MarkItDown::new();
 
     let result = markitdown
-        .convert_bytes(Bytes::from_static(include_bytes!("./test_files/test.docx")), Some(options))
+        .convert_bytes(
+            Bytes::from_static(include_bytes!("./test_files/test.docx")),
+            Some(options),
+        )
         .await;
     assert!(result.is_ok());
 }

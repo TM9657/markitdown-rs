@@ -12,7 +12,9 @@ async fn test_image_conversion() {
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert("tests/test_files/test.jpg", Some(options)).await;
+    let result = markitdown
+        .convert("tests/test_files/test.jpg", Some(options))
+        .await;
     assert!(result.is_ok());
 }
 
@@ -27,6 +29,11 @@ async fn test_image_bytes_conversion() {
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert_bytes(Bytes::from_static(include_bytes!("./test_files/test.jpg")), Some(options)).await;
+    let result = markitdown
+        .convert_bytes(
+            Bytes::from_static(include_bytes!("./test_files/test.jpg")),
+            Some(options),
+        )
+        .await;
     assert!(result.is_ok());
 }

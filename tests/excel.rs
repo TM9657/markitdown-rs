@@ -12,7 +12,9 @@ async fn test_excel_conversion() {
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert("tests/test_files/test.xlsx", Some(options)).await;
+    let result = markitdown
+        .convert("tests/test_files/test.xlsx", Some(options))
+        .await;
     assert!(result.is_ok());
     // write_to_file(&result.unwrap().to_markdown());
 }
@@ -28,7 +30,12 @@ async fn test_excel_bytes_conversion() {
 
     let markitdown = MarkItDown::new();
 
-    let result = markitdown.convert_bytes(Bytes::from_static(include_bytes!("./test_files/test.xlsx")), Some(options)).await;
+    let result = markitdown
+        .convert_bytes(
+            Bytes::from_static(include_bytes!("./test_files/test.xlsx")),
+            Some(options),
+        )
+        .await;
     assert!(result.is_ok());
 }
 

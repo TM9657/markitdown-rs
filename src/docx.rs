@@ -26,9 +26,9 @@ impl DocxConverter {
 
         let docx_file = DocxFile::from_reader(reader)
             .map_err(|e| MarkitdownError::ParseError(format!("Failed to read DOCX file: {}", e)))?;
-        let doc = docx_file
-            .parse()
-            .map_err(|e| MarkitdownError::ParseError(format!("Failed to parse DOCX file: {}", e)))?;
+        let doc = docx_file.parse().map_err(|e| {
+            MarkitdownError::ParseError(format!("Failed to parse DOCX file: {}", e))
+        })?;
 
         let mut document = Document::new();
         let mut page = Page::new(1);
@@ -101,7 +101,10 @@ impl DocxConverter {
         Ok(document)
     }
 
-    fn extract_images_from_docx(&self, bytes: &[u8]) -> Result<Vec<ExtractedImage>, MarkitdownError> {
+    fn extract_images_from_docx(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Vec<ExtractedImage>, MarkitdownError> {
         let mut images = Vec::new();
         let cursor = Cursor::new(bytes);
         let mut archive = ZipArchive::new(cursor)?;

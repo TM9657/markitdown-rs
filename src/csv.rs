@@ -5,9 +5,7 @@ use object_store::ObjectStore;
 use std::sync::Arc;
 
 use crate::error::MarkitdownError;
-use crate::model::{
-    ContentBlock, ConversionOptions, Document, DocumentConverter, Page,
-};
+use crate::model::{ContentBlock, ConversionOptions, Document, DocumentConverter, Page};
 
 pub struct CsvConverter;
 

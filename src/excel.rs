@@ -6,17 +6,16 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use crate::error::MarkitdownError;
-use crate::model::{
-    ContentBlock, ConversionOptions, Document, DocumentConverter, Page,
-};
+use crate::model::{ContentBlock, ConversionOptions, Document, DocumentConverter, Page};
 
 pub struct ExcelConverter;
 
 impl ExcelConverter {
     fn convert_excel_bytes(&self, bytes: &[u8]) -> Result<Document, MarkitdownError> {
         let reader = Cursor::new(bytes);
-        let mut workbook: Xlsx<_> = Xlsx::new(reader)
-            .map_err(|e| MarkitdownError::ParseError(format!("Failed to open Excel file: {}", e)))?;
+        let mut workbook: Xlsx<_> = Xlsx::new(reader).map_err(|e| {
+            MarkitdownError::ParseError(format!("Failed to open Excel file: {}", e))
+        })?;
 
         let mut document = Document::new();
         let sheet_names: Vec<String> = workbook.sheet_names().to_vec();

@@ -154,11 +154,7 @@ fn extract_data_url_image(data_url: &str, idx: usize) -> Option<ExtractedImage> 
     let data = parts[1];
 
     // Extract MIME type
-    let mime_type = header
-        .strip_prefix("data:")?
-        .split(';')
-        .next()?
-        .to_string();
+    let mime_type = header.strip_prefix("data:")?.split(';').next()?.to_string();
 
     // Decode base64 data
     use base64::prelude::*;

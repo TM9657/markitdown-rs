@@ -37,3 +37,27 @@ async-trait = "0.1"
 url = "2.5"
 thiserror = "2.0"
 hayro = {version="0.4.0", features = ["embed-fonts"]}
+rtf-parser = "0.4.2"
+rbook = "0.6.9"
+mail-parser = "0.11.1"
+serde_yaml = "0.9.33"
+toml = "0.9.8"
+icalendar = "0.17.5"
+vcard_parser = "0.2.2"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"], default-features = false }
+# Archive formats (static compilation for portability)
+tar = "0.4"
+flate2 = { version = "1.0", default-features = true }  # Uses rust_backend by default (miniz_oxide)
+bzip2 = "0.5"                                          # Uses bzip2-sys with bundled source
+xz2 = { version = "0.1", features = ["static"] }       # Static linking for lzma
+zstd = "0.13"                                          # Bundles zstd source, statically links
+sevenz-rust = "0.6"                                    # Pure Rust implementation
+# Legacy Office formats (OLE compound documents)
+cfb = "0.12.1"
+
+[dev-dependencies]
+criterion = { version = "0.8.1", features = ["async_tokio"] }
+
+[[bench]]
+name = "conversion"
+harness = false

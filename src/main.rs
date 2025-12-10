@@ -84,18 +84,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Error: Unable to convert file '{}'. {}",
-                            input_file, e
-                        );
+                        eprintln!("Error: Unable to convert file '{}'. {}", input_file, e);
                         std::process::exit(1);
                     }
                 }
             } else {
-                eprintln!(
-                    "Error: Unable to convert file '{}'. {}",
-                    input_file, e
-                );
+                eprintln!("Error: Unable to convert file '{}'. {}", input_file, e);
                 std::process::exit(1);
             }
         }

@@ -1,41 +1,78 @@
+pub mod archive;
+pub mod bibtex;
+pub mod calendar;
 pub mod csv;
+pub mod data;
 pub mod docx;
+pub mod email;
+pub mod epub;
 pub mod error;
 pub mod excel;
 pub mod html;
 pub mod image;
+pub mod iwork;
+pub mod legacy_office;
 pub mod llm;
+pub mod log;
+pub mod markdown;
 pub mod model;
+pub mod opendocument;
 pub mod pdf;
 pub mod pptx;
+pub mod prompts;
 pub mod rss;
+pub mod rtf;
+pub mod sqlite;
+pub mod vcard;
 
+use archive::ArchiveConverter;
+use bibtex::BibtexConverter;
 use bytes::Bytes;
+use calendar::ICalendarConverter;
 use csv::CsvConverter;
+use data::{CodeConverter, JsonConverter, TextConverter, TomlConverter, YamlConverter};
 use docx::DocxConverter;
+use email::EmailConverter;
+use epub::EpubConverter;
 use error::MarkitdownError;
 use excel::ExcelConverter;
 use html::HtmlConverter;
 use image::ImageConverter;
 use infer;
+use iwork::{KeynoteConverter, NumbersConverter, PagesConverter};
+use legacy_office::{
+    DocConverter, DotxConverter, PotxConverter, PptConverter, XlsConverter, XltxConverter,
+};
+use log::LogConverter;
+use markdown::MarkdownConverter;
 use mime_guess::MimeGuess;
-use model::{ConversionOptions, Document, DocumentConverter, DocumentConverterResult};
+use model::{DocumentConverter, DocumentConverterResult};
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::ObjectStore;
+use opendocument::{OdpConverter, OdsConverter, OdtConverter};
 use pdf::PdfConverter;
 use pptx::PptxConverter;
 use rss::RssConverter;
+use rtf::RtfConverter;
+use sqlite::SqliteConverter;
 use std::io::Cursor;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::{collections::HashMap, fs};
+use vcard::VCardConverter;
 use zip::ZipArchive;
 
 // Re-export key types
-pub use llm::{GenericLlmClient, LlmClient, LlmConfig, LlmProvider};
-pub use model::{ContentBlock, ExtractedImage, Page};
+pub use llm::{
+    create_llm_client, create_llm_client_with_config, LlmClient, LlmConfig, LlmWrapper,
+    MockLlmClient, SharedLlmClient,
+};
+pub use model::{ContentBlock, ConversionOptions, Document, ExtractedImage, Page};
+pub use prompts::{
+    DEFAULT_BATCH_IMAGE_PROMPT, DEFAULT_IMAGE_DESCRIPTION_PROMPT, DEFAULT_PAGE_CONVERSION_PROMPT,
+};
 
 /// Main interface for converting documents to markdown
 pub struct MarkItDown {
@@ -56,6 +93,7 @@ impl MarkItDown {
             store,
         };
 
+        // Document formats
         md.register_converter(Box::new(CsvConverter));
         md.register_converter(Box::new(ExcelConverter));
         md.register_converter(Box::new(HtmlConverter));
@@ -64,6 +102,51 @@ impl MarkItDown {
         md.register_converter(Box::new(PdfConverter));
         md.register_converter(Box::new(PptxConverter));
         md.register_converter(Box::new(DocxConverter));
+
+        // Ebook and document formats
+        md.register_converter(Box::new(RtfConverter));
+        md.register_converter(Box::new(EpubConverter));
+        md.register_converter(Box::new(EmailConverter));
+        md.register_converter(Box::new(MarkdownConverter));
+
+        // Calendar and contact formats
+        md.register_converter(Box::new(ICalendarConverter));
+        md.register_converter(Box::new(VCardConverter));
+
+        // Database formats
+        md.register_converter(Box::new(SqliteConverter));
+
+        // Data formats
+        md.register_converter(Box::new(JsonConverter));
+        md.register_converter(Box::new(YamlConverter));
+        md.register_converter(Box::new(TomlConverter));
+        md.register_converter(Box::new(TextConverter));
+        md.register_converter(Box::new(CodeConverter));
+
+        // Archive formats
+        md.register_converter(Box::new(ArchiveConverter::new()));
+
+        // Bibliography and log formats
+        md.register_converter(Box::new(BibtexConverter));
+        md.register_converter(Box::new(LogConverter));
+
+        // Legacy Office formats
+        md.register_converter(Box::new(DocConverter));
+        md.register_converter(Box::new(XlsConverter));
+        md.register_converter(Box::new(PptConverter));
+        md.register_converter(Box::new(DotxConverter));
+        md.register_converter(Box::new(PotxConverter));
+        md.register_converter(Box::new(XltxConverter));
+
+        // OpenDocument formats
+        md.register_converter(Box::new(OdtConverter));
+        md.register_converter(Box::new(OdsConverter));
+        md.register_converter(Box::new(OdpConverter));
+
+        // Apple iWork formats
+        md.register_converter(Box::new(PagesConverter));
+        md.register_converter(Box::new(NumbersConverter));
+        md.register_converter(Box::new(KeynoteConverter));
 
         md
     }
@@ -107,23 +190,40 @@ impl MarkItDown {
     }
 
     /// Detect file type from path
+    /// Priority: 1) File extension (if valid), 2) infer magic bytes, 3) MIME guess
     pub fn detect_file_type(&self, file_path: &str) -> Option<String> {
+        // First, check file extension - this is most reliable for known formats
+        // especially for OLE compound files (.doc, .xls, .ppt) which are all detected as .msi by infer
+        if let Some(ext) = Path::new(file_path).extension() {
+            if let Some(ext_str) = ext.to_str() {
+                let ext_lower = ext_str.to_lowercase();
+                // Check if we have a converter for this extension
+                let ext_with_dot = format!(".{}", ext_lower);
+                if self.find_converter(&ext_with_dot).is_some() {
+                    return Some(ext_with_dot);
+                }
+            }
+        }
+
+        // Fall back to infer for unknown extensions
         if let Some(kind) = infer::get_from_path(file_path).ok().flatten() {
             return Some(format!(".{}", kind.extension()));
         }
 
-        if let Some(ext) = Path::new(file_path).extension() {
-            if let Some(ext_str) = ext.to_str() {
-                return Some(format!(".{}", ext_str.to_lowercase()));
-            }
-        }
-
+        // Finally try MIME guess
         if let Ok(_content) = fs::read(file_path) {
             if let Some(mime) = MimeGuess::from_path(file_path).first() {
                 let mime_str = mime.to_string();
                 if let Some(extensions) = Self::get_file_type_map().get(mime_str.as_str()) {
                     return extensions.first().map(|&ext| ext.to_string());
                 }
+            }
+        }
+
+        // Last resort: return the extension anyway
+        if let Some(ext) = Path::new(file_path).extension() {
+            if let Some(ext_str) = ext.to_str() {
+                return Some(format!(".{}", ext_str.to_lowercase()));
             }
         }
 
@@ -168,9 +268,9 @@ impl MarkItDown {
                 opts.file_extension = extension.clone();
             }
         } else {
-            options = Some(ConversionOptions::default().with_extension(
-                extension.clone().unwrap_or_default(),
-            ));
+            options = Some(
+                ConversionOptions::default().with_extension(extension.clone().unwrap_or_default()),
+            );
         }
 
         let ext = extension.as_deref().unwrap_or("");
@@ -189,10 +289,12 @@ impl MarkItDown {
                 let bytes = fs::read(path)?;
                 return converter.convert_bytes(Bytes::from(bytes), options).await;
             }
-            
+
             // Otherwise, use the object store
             let obj_path = object_store::path::Path::from(path);
-            return converter.convert(self.store.clone(), &obj_path, options).await;
+            return converter
+                .convert(self.store.clone(), &obj_path, options)
+                .await;
         }
 
         Err(MarkitdownError::UnsupportedFormat(format!(
@@ -220,9 +322,9 @@ impl MarkItDown {
                 opts.file_extension = extension.clone();
             }
         } else {
-            options = Some(ConversionOptions::default().with_extension(
-                extension.clone().unwrap_or_default(),
-            ));
+            options = Some(
+                ConversionOptions::default().with_extension(extension.clone().unwrap_or_default()),
+            );
         }
 
         let ext = extension.as_deref().unwrap_or("");
@@ -260,7 +362,10 @@ impl MarkItDown {
         bytes: &[u8],
         options: Option<ConversionOptions>,
     ) -> Result<Option<DocumentConverterResult>, MarkitdownError> {
-        match self.convert_bytes(Bytes::copy_from_slice(bytes), options).await {
+        match self
+            .convert_bytes(Bytes::copy_from_slice(bytes), options)
+            .await
+        {
             Ok(doc) => Ok(Some(DocumentConverterResult::from(doc))),
             Err(MarkitdownError::UnsupportedFormat(_)) => Ok(None),
             Err(e) => Err(e),
@@ -323,20 +428,23 @@ impl MarkItDown {
             file.read_to_end(&mut file_contents)?;
 
             // Detect file type
-            let ext = self
-                .detect_bytes(&file_contents)
-                .or_else(|| {
-                    Path::new(&file_name)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|s| format!(".{}", s.to_lowercase()))
-                });
+            let ext = self.detect_bytes(&file_contents).or_else(|| {
+                Path::new(&file_name)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| format!(".{}", s.to_lowercase()))
+            });
 
             if let Some(extension) = ext {
-                let file_opts = options.clone().map(|mut o| {
-                    o.file_extension = Some(extension.clone());
-                    o
-                }).or_else(|| Some(ConversionOptions::default().with_extension(extension.clone())));
+                let file_opts = options
+                    .clone()
+                    .map(|mut o| {
+                        o.file_extension = Some(extension.clone());
+                        o
+                    })
+                    .or_else(|| {
+                        Some(ConversionOptions::default().with_extension(extension.clone()))
+                    });
 
                 if let Some(converter) = self.find_converter(&extension) {
                     match converter
@@ -361,7 +469,7 @@ impl MarkItDown {
                             document.add_page(page);
                         }
                         Err(_) => {
-                            // Skip files we can't convert
+                            // Skip files we cant convert
                         }
                     }
                 }
