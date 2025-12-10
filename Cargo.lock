@@ -2821,8 +2821,7 @@ dependencies = [
 [[package]]
 name = "rbook"
 version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecbcfcb4bac3d50be85bfd85807347168f45b3d8f98fb38013e61c02f3b0d869"
+source = "git+https://github.com/TM9657/rbook.git?branch=master#9df02c833a1f60cfeedc00a52e22c0a813b143e2"
 dependencies = [
  "percent-encoding",
  "quick-xml 0.38.4",
