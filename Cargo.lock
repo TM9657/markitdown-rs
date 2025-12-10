@@ -2014,7 +2014,7 @@ dependencies = [
  "mime_guess",
  "object_store",
  "pdf-extract",
- "quick-xml 0.37.5",
+ "quick-xml 0.38.4",
  "rbook",
  "regex",
  "rig-core",
