@@ -29,6 +29,7 @@ use rig::{
 use std::sync::Arc;
 
 use crate::error::MarkitdownError;
+use crate::model::ExtractedImage;
 use crate::prompts::{
     DEFAULT_BATCH_IMAGE_PROMPT, DEFAULT_IMAGE_DESCRIPTION_PROMPT, DEFAULT_PAGE_CONVERSION_PROMPT,
 };
@@ -47,6 +48,9 @@ pub struct LlmConfig {
     /// Number of images to send per LLM message for parallelization
     /// Default: 1 (one image per request)
     pub images_per_message: usize,
+    /// Maximum tokens for LLM output (None = no limit)
+    /// Helps prevent runaway generation from poorly-behaved models
+    pub max_tokens: Option<u64>,
 }
 
 impl Default for LlmConfig {
@@ -55,8 +59,9 @@ impl Default for LlmConfig {
             image_description_prompt: DEFAULT_IMAGE_DESCRIPTION_PROMPT.to_string(),
             page_conversion_prompt: DEFAULT_PAGE_CONVERSION_PROMPT.to_string(),
             batch_image_prompt: DEFAULT_BATCH_IMAGE_PROMPT.to_string(),
-            temperature: 0.3,
+            temperature: 0.1, // Low temperature for accurate extraction with minimal repetition
             images_per_message: 1,
+            max_tokens: Some(4096), // Reasonable default to prevent runaway generation
         }
     }
 }
@@ -96,6 +101,13 @@ impl LlmConfig {
         self.images_per_message = count.max(1);
         self
     }
+
+    /// Set maximum tokens for LLM output
+    /// Use None for no limit (not recommended for production)
+    pub fn with_max_tokens(mut self, tokens: Option<u64>) -> Self {
+        self.max_tokens = tokens;
+        self
+    }
 }
 
 /// Trait for LLM clients that can describe images and convert pages.
@@ -124,6 +136,22 @@ pub trait LlmClient: Send + Sync {
         &self,
         images: &[(&[u8], &str)], // (data, mime_type) pairs
     ) -> Result<Vec<String>, MarkitdownError>;
+
+    /// Generate descriptions for multiple ExtractedImage references in batch.
+    /// This is the preferred method as it provides access to image metadata
+    /// (alt_text, dimensions, page_number) for better context-aware descriptions.
+    /// Returns one description per image in the same order.
+    async fn describe_extracted_images(
+        &self,
+        images: &[&ExtractedImage],
+    ) -> Result<Vec<String>, MarkitdownError> {
+        // Default implementation delegates to describe_images_batch
+        let data: Vec<(&[u8], &str)> = images
+            .iter()
+            .map(|img| (img.data.as_ref(), img.mime_type.as_str()))
+            .collect();
+        self.describe_images_batch(&data).await
+    }
 
     /// Convert a page image to markdown (for PDF/scanned document conversion)
     async fn convert_page_image(
@@ -208,21 +236,70 @@ impl<M: CompletionModel> LlmWrapper<M> {
         system_prompt: &str,
         user_content: OneOrMany<UserContent>,
     ) -> CompletionRequestBuilder<M> {
-        self.model
+        let mut builder = self
+            .model
             .completion_request(system_prompt)
             .messages(vec![Message::User {
                 content: user_content,
             }])
-            .temperature(self.config.temperature)
+            .temperature(self.config.temperature);
+
+        if let Some(max_tokens) = self.config.max_tokens {
+            builder = builder.max_tokens(max_tokens);
+        }
+
+        builder
     }
 
-    /// Send a request and extract the response text
+    /// Send a request and extract the response text, with post-processing for repetition detection
     async fn send_request(&self, request: CompletionRequest) -> Result<String, MarkitdownError> {
-        self.model
+        let response = self
+            .model
             .completion(request)
             .await
             .map(|r| extract_text_from_response(&r.choice))
-            .map_err(|e| MarkitdownError::LlmError(format!("LLM error: {}", e)))
+            .map_err(|e| MarkitdownError::LlmError(format!("LLM error: {}", e)))?;
+
+        // Apply repetition detection and cleanup
+        Ok(detect_and_truncate_repetition(&response))
+    }
+
+    /// Describe a single ExtractedImage with context-aware prompts
+    async fn describe_single_extracted_image(
+        &self,
+        img: &ExtractedImage,
+    ) -> Result<String, MarkitdownError>
+    where
+        M: Send + Sync + 'static,
+    {
+        let base64_data = img.to_base64();
+        let image_type = parse_mime_to_image_type(&img.mime_type);
+
+        let mut content = OneOrMany::one(UserContent::image_base64(
+            base64_data,
+            Some(image_type),
+            Some(ImageDetail::Auto),
+        ));
+
+        // Build a context-aware prompt
+        let mut prompt = String::from("Describe this image in detail.");
+        if let Some(alt) = &img.alt_text {
+            prompt.push_str(&format!(" The existing alt text is: '{}'. Build upon or improve this description.", alt));
+        }
+        if let (Some(w), Some(h)) = (img.width, img.height) {
+            prompt.push_str(&format!(" The image is {}x{} pixels.", w, h));
+        }
+        if let Some(page) = img.page_number {
+            prompt.push_str(&format!(" This image appears on page {} of the document.", page));
+        }
+
+        content.push(UserContent::text(prompt));
+
+        let request = self
+            .build_request(&self.config.image_description_prompt, content)
+            .build();
+
+        self.send_request(request).await
     }
 }
 
@@ -237,6 +314,106 @@ fn extract_text_from_response(content: &OneOrMany<AssistantContent>) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Detect and truncate repetitive content from LLM output.
+///
+/// Some models (especially free tier ones) can get stuck in loops, generating
+/// the same phrase thousands of times. This function detects such patterns
+/// and truncates the output at the first repetition.
+fn detect_and_truncate_repetition(text: &str) -> String {
+    // If text is short, no need to check
+    if text.len() < 500 {
+        return text.to_string();
+    }
+
+    // Helper to find nearest char boundary at or before position
+    fn find_char_boundary(s: &str, pos: usize) -> usize {
+        if pos >= s.len() {
+            return s.len();
+        }
+        let mut idx = pos;
+        while idx > 0 && !s.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        idx
+    }
+
+    // Strategy 1: Check for repeating substrings using sliding window
+    // Look for any 30+ char pattern that repeats 3+ times
+    let check_sizes = [30, 50, 80, 100];
+    for &window_size in &check_sizes {
+        if text.len() > window_size * 4 {
+            // Sample multiple positions throughout the text
+            let sample_count = 10.min(text.len() / window_size);
+            for i in 0..sample_count {
+                let raw_start = (text.len() / sample_count) * i;
+                let start = find_char_boundary(text, raw_start);
+                let raw_end = start + window_size;
+                let end = find_char_boundary(text, raw_end);
+                
+                if end <= text.len() && start < end {
+                    let sample = &text[start..end];
+                    // Skip if sample is mostly whitespace
+                    if sample.chars().filter(|c| !c.is_whitespace()).count() < sample.len() / 3 {
+                        continue;
+                    }
+                    let count = text.matches(sample).count();
+                    if count >= 3 {
+                        // Found repetition - truncate at first occurrence + buffer
+                        if let Some(first_pos) = text.find(sample) {
+                            let raw_end_pos = first_pos + sample.len() * 2;
+                            let end_pos = find_char_boundary(text, raw_end_pos.min(text.len()));
+                            return format!(
+                                "{}\n\n[Note: Repetitive content detected and truncated]",
+                                &text[..end_pos]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Strategy 2: Look for consecutive identical lines (fallback)
+    let lines: Vec<&str> = text.lines().collect();
+    let mut seen_consecutive = 0;
+    let mut last_line = "";
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.len() < 10 {
+            continue;
+        }
+        if trimmed == last_line {
+            seen_consecutive += 1;
+            if seen_consecutive >= 4 {
+                let truncate_at = i - seen_consecutive;
+                let truncated: Vec<&str> = lines[..truncate_at].to_vec();
+                return format!(
+                    "{}\n\n[Note: Repetitive content detected and truncated]",
+                    truncated.join("\n")
+                );
+            }
+        } else {
+            seen_consecutive = 1;
+            last_line = trimmed;
+        }
+    }
+
+    // Strategy 3: Check if output is suspiciously long for a single page
+    // Normal pages are typically 500-3000 words; anything over 5000 is suspicious
+    let word_count = text.split_whitespace().count();
+    if word_count > 5000 {
+        // Truncate to approximately 3000 words
+        let words: Vec<&str> = text.split_whitespace().take(3000).collect();
+        let truncated = words.join(" ");
+        return format!(
+            "{}\n\n[Note: Output truncated due to excessive length - possible repetition]",
+            truncated
+        );
+    }
+
+    text.to_string()
 }
 
 /// Parse MIME type string to rig ImageMediaType
@@ -356,7 +533,7 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
             Some(ImageDetail::High), // Use high detail for page conversion
         ));
         content.push(UserContent::text(
-            "Convert this document page to clean, well-structured markdown.",
+            "Convert this page to markdown. Output only the content, no commentary.",
         ));
 
         let request = self
@@ -377,6 +554,76 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
 
     fn config(&self) -> &LlmConfig {
         &self.config
+    }
+
+    async fn describe_extracted_images(
+        &self,
+        images: &[&ExtractedImage],
+    ) -> Result<Vec<String>, MarkitdownError> {
+        if images.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let batch_size = self.config.images_per_message;
+
+        if batch_size == 1 {
+            // Process one at a time in parallel, with context-aware prompts
+            let futures: Vec<_> = images
+                .iter()
+                .map(|img| self.describe_single_extracted_image(img))
+                .collect();
+
+            let results = join_all(futures).await;
+            results.into_iter().collect()
+        } else {
+            // Process in batches with context
+            let mut all_descriptions = Vec::with_capacity(images.len());
+
+            for chunk in images.chunks(batch_size) {
+                if chunk.len() == 1 {
+                    let desc = self.describe_single_extracted_image(chunk[0]).await?;
+                    all_descriptions.push(desc);
+                } else {
+                    // Multiple images in one request with context
+                    let mut content =
+                        OneOrMany::one(UserContent::text(&self.config.batch_image_prompt));
+
+                    for (i, img) in chunk.iter().enumerate() {
+                        let base64_data = img.to_base64();
+                        let image_type = parse_mime_to_image_type(&img.mime_type);
+                        
+                        // Add context from image metadata
+                        let mut context = format!("\n--- Image {} ---", i + 1);
+                        if let Some(alt) = &img.alt_text {
+                            context.push_str(&format!("\nExisting alt text: {}", alt));
+                        }
+                        if let (Some(w), Some(h)) = (img.width, img.height) {
+                            context.push_str(&format!("\nDimensions: {}x{} pixels", w, h));
+                        }
+                        if let Some(page) = img.page_number {
+                            context.push_str(&format!("\nFrom page: {}", page));
+                        }
+                        
+                        content.push(UserContent::text(context));
+                        content.push(UserContent::image_base64(
+                            base64_data,
+                            Some(image_type),
+                            Some(ImageDetail::Auto),
+                        ));
+                    }
+
+                    let request = self
+                        .build_request(&self.config.batch_image_prompt, content)
+                        .build();
+
+                    let response = self.send_request(request).await?;
+                    let descriptions = parse_batch_response(&response, chunk.len());
+                    all_descriptions.extend(descriptions);
+                }
+            }
+
+            Ok(all_descriptions)
+        }
     }
 }
 

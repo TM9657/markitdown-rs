@@ -162,58 +162,76 @@ impl OdsConverter {
             .map_err(|e| MarkitdownError::ParseError(format!("ODS parse error: {}", e)))?;
 
         let mut document = Document::new();
-        let mut markdown = String::new();
-
-        markdown.push_str("# OpenDocument Spreadsheet\n\n");
 
         let sheet_names = workbook.sheet_names().to_vec();
 
-        for sheet_name in &sheet_names {
-            if let Ok(range) = workbook.worksheet_range(sheet_name) {
-                markdown.push_str(&format!("## Sheet: {}\n\n", sheet_name));
+        for (sheet_idx, sheet_name) in sheet_names.iter().enumerate() {
+            let mut page = Page::new((sheet_idx + 1) as u32);
+            
+            // Add sheet name as heading
+            page.add_content(ContentBlock::Heading {
+                level: 2,
+                text: format!("Sheet: {}", sheet_name),
+            });
 
+            if let Ok(range) = workbook.worksheet_range(sheet_name) {
                 let rows: Vec<_> = range.rows().collect();
                 if rows.is_empty() {
-                    markdown.push_str("*Empty sheet*\n\n");
+                    page.add_content(ContentBlock::Text("*Empty sheet*".to_string()));
+                    document.add_page(page);
                     continue;
                 }
 
                 // Create table
                 let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
                 if num_cols == 0 {
+                    document.add_page(page);
                     continue;
                 }
 
                 // Header row
-                if let Some(first_row) = rows.first() {
-                    let headers: Vec<String> = first_row
+                let headers = if let Some(first_row) = rows.first() {
+                    first_row
                         .iter()
                         .map(|c| format!("{}", c).replace('|', "\\|"))
-                        .collect();
-                    markdown.push_str(&format!("| {} |\n", headers.join(" | ")));
-                    markdown.push_str(&format!("|{}|\n", vec!["---"; headers.len()].join("|")));
-                }
+                        .collect()
+                } else {
+                    vec![]
+                };
 
                 // Data rows (skip header)
-                for row in rows.iter().skip(1).take(100) {
-                    // Limit rows
-                    let cells: Vec<String> = row
-                        .iter()
-                        .map(|c| format!("{}", c).replace('|', "\\|"))
-                        .collect();
-                    markdown.push_str(&format!("| {} |\n", cells.join(" | ")));
-                }
+                let data_rows: Vec<Vec<String>> = rows
+                    .iter()
+                    .skip(1)
+                    .take(100)
+                    .map(|row| {
+                        row.iter()
+                            .map(|c| format!("{}", c).replace('|', "\\|"))
+                            .collect()
+                    })
+                    .collect();
+
+                page.add_content(ContentBlock::Table {
+                    headers,
+                    rows: data_rows,
+                });
 
                 if rows.len() > 101 {
-                    markdown.push_str(&format!("\n*... and {} more rows*\n", rows.len() - 101));
+                    page.add_content(ContentBlock::Text(format!(
+                        "*... and {} more rows*",
+                        rows.len() - 101
+                    )));
                 }
-                markdown.push('\n');
             }
+
+            document.add_page(page);
         }
 
-        let mut page = Page::new(1);
-        page.add_content(ContentBlock::Markdown(markdown));
-        document.add_page(page);
+        // If no sheets found, create empty document
+        if document.pages.is_empty() {
+            document.add_page(Page::new(1));
+        }
+
         Ok(document)
     }
 }
@@ -254,10 +272,6 @@ impl OdpConverter {
             .map_err(|e| MarkitdownError::ParseError(format!("ODP parse error: {}", e)))?;
 
         let mut document = Document::new();
-        let mut page = Page::new(1);
-        let mut markdown = String::new();
-
-        markdown.push_str("# OpenDocument Presentation\n\n");
 
         // Read content.xml
         if let Ok(mut content_file) = archive.by_name("content.xml") {
@@ -269,16 +283,23 @@ impl OdpConverter {
             let slides = Self::extract_slides_from_xml(&content)?;
 
             for (idx, slide_text) in slides.iter().enumerate() {
-                markdown.push_str(&format!("## Slide {}\n\n", idx + 1));
-                markdown.push_str(slide_text);
-                markdown.push_str("\n\n---\n\n");
+                let mut page = Page::new((idx + 1) as u32);
+                page.add_content(ContentBlock::Heading {
+                    level: 2,
+                    text: format!("Slide {}", idx + 1),
+                });
+                page.add_content(ContentBlock::Text(slide_text.clone()));
+                document.add_page(page);
             }
-        } else {
-            markdown.push_str("*Unable to read content from ODP file.*\n");
         }
 
-        page.add_content(ContentBlock::Markdown(markdown));
-        document.add_page(page);
+        // If no slides found, create empty document
+        if document.pages.is_empty() {
+            let mut page = Page::new(1);
+            page.add_content(ContentBlock::Text("*Unable to read content from ODP file.*".to_string()));
+            document.add_page(page);
+        }
+
         Ok(document)
     }
 

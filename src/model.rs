@@ -228,14 +228,14 @@ impl Page {
             return Ok(self.clone());
         }
 
-        // Prepare batch data
-        let image_data: Vec<(&[u8], &str)> = images_to_describe
+        // Prepare image references for batch processing
+        let image_refs: Vec<&ExtractedImage> = images_to_describe
             .iter()
-            .map(|(_, img)| (img.data.as_ref(), img.mime_type.as_str()))
+            .map(|(_, img)| *img)
             .collect();
 
-        // Get descriptions in batch
-        let descriptions = llm_client.describe_images_batch(&image_data).await?;
+        // Get descriptions using the context-aware method
+        let descriptions = llm_client.describe_extracted_images(&image_refs).await?;
 
         // Build the new page with descriptions
         let mut new_page = Page::new(self.page_number);
@@ -400,6 +400,8 @@ pub struct ConversionOptions {
     pub llm_client: Option<SharedLlmClient>,
     /// Whether to extract images
     pub extract_images: bool,
+    /// Force LLM OCR for all PDF pages (useful for PDFs with images)
+    pub force_llm_ocr: bool,
 }
 
 impl std::fmt::Debug for ConversionOptions {
@@ -412,6 +414,7 @@ impl std::fmt::Debug for ConversionOptions {
                 &self.llm_client.as_ref().map(|_| "<LlmClient>"),
             )
             .field("extract_images", &self.extract_images)
+            .field("force_llm_ocr", &self.force_llm_ocr)
             .finish()
     }
 }
@@ -423,6 +426,7 @@ impl Default for ConversionOptions {
             url: None,
             llm_client: None,
             extract_images: true,
+            force_llm_ocr: false,
         }
     }
 }
@@ -444,6 +448,13 @@ impl ConversionOptions {
 
     pub fn with_images(mut self, extract: bool) -> Self {
         self.extract_images = extract;
+        self
+    }
+
+    /// Force LLM OCR for all PDF pages, regardless of text quality.
+    /// This is useful for PDFs with important images that need descriptions.
+    pub fn with_force_llm_ocr(mut self, force: bool) -> Self {
+        self.force_llm_ocr = force;
         self
     }
 }

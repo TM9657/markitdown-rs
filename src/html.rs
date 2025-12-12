@@ -67,7 +67,16 @@ impl DocumentConverter for HtmlConverter {
 
         let result = store.get(path).await?;
         let bytes = result.bytes().await?;
-        self.convert_html_bytes(&bytes, extract_images)
+        let mut document = self.convert_html_bytes(&bytes, extract_images)?;
+
+        // If LLM client is provided, get descriptions for all images
+        if let Some(ref opts) = options {
+            if let Some(ref llm_client) = opts.llm_client {
+                document = document.with_image_descriptions(llm_client.as_ref()).await?;
+            }
+        }
+
+        Ok(document)
     }
 
     async fn convert_bytes(
@@ -87,7 +96,16 @@ impl DocumentConverter for HtmlConverter {
         }
 
         let extract_images = options.as_ref().map(|o| o.extract_images).unwrap_or(true);
-        self.convert_html_bytes(&bytes, extract_images)
+        let mut document = self.convert_html_bytes(&bytes, extract_images)?;
+
+        // If LLM client is provided, get descriptions for all images
+        if let Some(ref opts) = options {
+            if let Some(ref llm_client) = opts.llm_client {
+                document = document.with_image_descriptions(llm_client.as_ref()).await?;
+            }
+        }
+
+        Ok(document)
     }
 
     fn supported_extensions(&self) -> &[&str] {
