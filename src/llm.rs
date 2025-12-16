@@ -284,13 +284,19 @@ impl<M: CompletionModel> LlmWrapper<M> {
         // Build a context-aware prompt
         let mut prompt = String::from("Describe this image in detail.");
         if let Some(alt) = &img.alt_text {
-            prompt.push_str(&format!(" The existing alt text is: '{}'. Build upon or improve this description.", alt));
+            prompt.push_str(&format!(
+                " The existing alt text is: '{}'. Build upon or improve this description.",
+                alt
+            ));
         }
         if let (Some(w), Some(h)) = (img.width, img.height) {
             prompt.push_str(&format!(" The image is {}x{} pixels.", w, h));
         }
         if let Some(page) = img.page_number {
-            prompt.push_str(&format!(" This image appears on page {} of the document.", page));
+            prompt.push_str(&format!(
+                " This image appears on page {} of the document.",
+                page
+            ));
         }
 
         content.push(UserContent::text(prompt));
@@ -351,7 +357,7 @@ fn detect_and_truncate_repetition(text: &str) -> String {
                 let start = find_char_boundary(text, raw_start);
                 let raw_end = start + window_size;
                 let end = find_char_boundary(text, raw_end);
-                
+
                 if end <= text.len() && start < end {
                     let sample = &text[start..end];
                     // Skip if sample is mostly whitespace
@@ -591,7 +597,7 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
                     for (i, img) in chunk.iter().enumerate() {
                         let base64_data = img.to_base64();
                         let image_type = parse_mime_to_image_type(&img.mime_type);
-                        
+
                         // Add context from image metadata
                         let mut context = format!("\n--- Image {} ---", i + 1);
                         if let Some(alt) = &img.alt_text {
@@ -603,7 +609,7 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
                         if let Some(page) = img.page_number {
                             context.push_str(&format!("\nFrom page: {}", page));
                         }
-                        
+
                         content.push(UserContent::text(context));
                         content.push(UserContent::image_base64(
                             base64_data,

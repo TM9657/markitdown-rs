@@ -38,27 +38,27 @@ fn find_text_break_point(text: &str, target: usize) -> usize {
     if target >= text.len() {
         return text.len();
     }
-    
+
     // Look for paragraph break (double newline) within 20% of target
     let search_start = (target as f64 * 0.8) as usize;
     let search_end = (target as f64 * 1.2).min(text.len() as f64) as usize;
-    
+
     if let Some(pos) = text[search_start..search_end].find("\n\n") {
         return search_start + pos + 2;
     }
-    
+
     // Look for sentence end
     for end_char in [". ", ".\n", "! ", "!\n", "? ", "?\n"] {
         if let Some(pos) = text[search_start..search_end].find(end_char) {
             return search_start + pos + end_char.len();
         }
     }
-    
+
     // Look for word boundary
     if let Some(pos) = text[target..search_end.min(text.len())].find(' ') {
         return target + pos + 1;
     }
-    
+
     target
 }
 
@@ -128,7 +128,9 @@ impl PageMetrics {
         // Calculate special character ratio (non-alphanumeric, non-whitespace, non-punctuation)
         let special_chars = text
             .chars()
-            .filter(|c| !c.is_alphanumeric() && !c.is_whitespace() && !".,:;!?'-\"()[]{}".contains(*c))
+            .filter(|c| {
+                !c.is_alphanumeric() && !c.is_whitespace() && !".,:;!?'-\"()[]{}".contains(*c)
+            })
             .count();
         let special_char_ratio = if char_count > 0 {
             special_chars as f64 / char_count as f64
@@ -247,34 +249,34 @@ impl PdfConverter {
     /// If text extraction gives different page count than PDF structure, redistribute text
     fn extract_text_aligned_to_pages(bytes: &[u8], actual_page_count: usize) -> Vec<String> {
         let extracted = Self::extract_text_by_page(bytes).unwrap_or_default();
-        
+
         if extracted.len() == actual_page_count {
             // Perfect alignment
             return extracted;
         }
-        
+
         if extracted.is_empty() || actual_page_count == 0 {
             return vec![String::new(); actual_page_count];
         }
-        
+
         // Merge all text and redistribute across actual page count
         // This handles both:
         // - Fewer text pages than actual (e.g., no form feeds, all text in one block)
         // - More text pages than actual (form feeds don't align with page boundaries)
         let total_text: String = extracted.join("\n\n");
-        
+
         // If total text is very small, don't try to split it
         if total_text.trim().len() < 100 {
             let mut result = vec![String::new(); actual_page_count];
             result[0] = total_text;
             return result;
         }
-        
+
         let chars_per_page = (total_text.len() / actual_page_count).max(1);
-        
+
         let mut result = Vec::with_capacity(actual_page_count);
         let mut remaining = total_text.as_str();
-        
+
         for i in 0..actual_page_count {
             if i == actual_page_count - 1 {
                 // Last page gets all remaining text
@@ -288,7 +290,7 @@ impl PdfConverter {
                 remaining = rest.trim_start();
             }
         }
-        
+
         result
     }
 
@@ -313,14 +315,14 @@ impl PdfConverter {
         // Try to parse PDF structure first to get accurate page count
         let pdf = Self::parse_pdf(bytes).ok();
         let actual_page_count = pdf.as_ref().map(|p| p.pages().len()).unwrap_or(0);
-        
+
         // Get text aligned to actual page count if we have it
         let page_texts = if actual_page_count > 0 {
             Self::extract_text_aligned_to_pages(bytes, actual_page_count)
         } else {
             Self::extract_text_by_page(bytes).unwrap_or_default()
         };
-        
+
         let page_count = if actual_page_count > 0 {
             actual_page_count
         } else {
@@ -366,7 +368,8 @@ impl PdfConverter {
         force_llm: bool,
     ) -> Page {
         let mut page = Page::new((idx + 1) as u32);
-        let use_llm = (force_llm || metrics.should_use_llm()) && llm_client.is_some() && pdf.is_some();
+        let use_llm =
+            (force_llm || metrics.should_use_llm()) && llm_client.is_some() && pdf.is_some();
 
         if use_llm {
             if let Some(content) = Self::try_llm_conversion(idx, metrics, llm_client, pdf).await {
@@ -457,7 +460,7 @@ impl PdfConverter {
         // Try to get actual page count from PDF structure
         let pdf = Self::parse_pdf(bytes).ok();
         let actual_page_count = pdf.as_ref().map(|p| p.pages().len()).unwrap_or(0);
-        
+
         // Get text aligned to actual pages if possible
         let page_texts = if actual_page_count > 0 {
             Self::extract_text_aligned_to_pages(bytes, actual_page_count)
@@ -483,7 +486,9 @@ impl PdfConverter {
         if document.pages.is_empty() && actual_page_count > 0 {
             for idx in 0..actual_page_count {
                 let mut page = Page::new((idx + 1) as u32);
-                page.add_content(ContentBlock::Text("[Page content could not be extracted]".to_string()));
+                page.add_content(ContentBlock::Text(
+                    "[Page content could not be extracted]".to_string(),
+                ));
                 document.add_page(page);
             }
         } else if document.pages.is_empty() {
@@ -493,7 +498,9 @@ impl PdfConverter {
                 .unwrap_or_default();
             let mut page = Page::new(1);
             if text_content.is_empty() {
-                page.add_content(ContentBlock::Text("[PDF content could not be extracted]".to_string()));
+                page.add_content(ContentBlock::Text(
+                    "[PDF content could not be extracted]".to_string(),
+                ));
             } else {
                 page.add_content(ContentBlock::Text(text_content));
             }
@@ -530,7 +537,9 @@ impl DocumentConverter for PdfConverter {
         if let Some(opts) = &options {
             if let Some(llm) = &opts.llm_client {
                 let force_llm = opts.force_llm_ocr;
-                return self.convert_with_llm(&bytes, Some(llm.as_ref()), force_llm).await;
+                return self
+                    .convert_with_llm(&bytes, Some(llm.as_ref()), force_llm)
+                    .await;
             }
         }
 
@@ -557,7 +566,9 @@ impl DocumentConverter for PdfConverter {
         if let Some(opts) = &options {
             if let Some(llm) = &opts.llm_client {
                 let force_llm = opts.force_llm_ocr;
-                return self.convert_with_llm(&bytes, Some(llm.as_ref()), force_llm).await;
+                return self
+                    .convert_with_llm(&bytes, Some(llm.as_ref()), force_llm)
+                    .await;
             }
         }
 

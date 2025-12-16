@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::error::MarkitdownError;
 use crate::llm::{LlmClient, SharedLlmClient};
+use crate::table_merge;
 
 /// Represents an extracted image from a document
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,10 +230,8 @@ impl Page {
         }
 
         // Prepare image references for batch processing
-        let image_refs: Vec<&ExtractedImage> = images_to_describe
-            .iter()
-            .map(|(_, img)| *img)
-            .collect();
+        let image_refs: Vec<&ExtractedImage> =
+            images_to_describe.iter().map(|(_, img)| *img).collect();
 
         // Get descriptions using the context-aware method
         let descriptions = llm_client.describe_extracted_images(&image_refs).await?;
@@ -365,6 +364,44 @@ impl Document {
 
         new_doc
     }
+
+    /// Merge tables that span multiple pages into single tables.
+    ///
+    /// This method detects tables at page boundaries and merges them when:
+    /// - A table ends at the bottom of a page
+    /// - The next page starts with table content (with or without header)
+    /// - The column counts match
+    ///
+    /// Merged tables are placed on the first page where they start.
+    pub fn with_merged_tables(&self) -> Document {
+        if self.pages.len() <= 1 {
+            return self.clone();
+        }
+
+        // Extract markdown content from each page
+        let page_contents: Vec<(u32, String)> = self
+            .pages
+            .iter()
+            .map(|p| (p.page_number, p.to_markdown()))
+            .collect();
+
+        // Merge tables across pages
+        let merged_contents = table_merge::merge_tables_across_pages(&page_contents);
+
+        // Rebuild the document with merged content
+        let mut new_doc = Document::new();
+        new_doc.title = self.title.clone();
+        new_doc.metadata = self.metadata.clone();
+
+        for merged in merged_contents {
+            let mut page = Page::new(merged.page_number);
+            // Use the merged markdown content
+            page.add_content(ContentBlock::Markdown(merged.content));
+            new_doc.add_page(page);
+        }
+
+        new_doc
+    }
 }
 
 impl Default for Document {
@@ -402,6 +439,8 @@ pub struct ConversionOptions {
     pub extract_images: bool,
     /// Force LLM OCR for all PDF pages (useful for PDFs with images)
     pub force_llm_ocr: bool,
+    /// Merge tables that span multiple pages into a single table
+    pub merge_multipage_tables: bool,
 }
 
 impl std::fmt::Debug for ConversionOptions {
@@ -427,6 +466,7 @@ impl Default for ConversionOptions {
             llm_client: None,
             extract_images: true,
             force_llm_ocr: false,
+            merge_multipage_tables: false,
         }
     }
 }
@@ -455,6 +495,14 @@ impl ConversionOptions {
     /// This is useful for PDFs with important images that need descriptions.
     pub fn with_force_llm_ocr(mut self, force: bool) -> Self {
         self.force_llm_ocr = force;
+        self
+    }
+
+    /// Enable merging of tables that span multiple pages.
+    /// When enabled, tables that continue from one page to the next will be
+    /// merged into a single table on the first page.
+    pub fn with_merge_multipage_tables(mut self, merge: bool) -> Self {
+        self.merge_multipage_tables = merge;
         self
     }
 }

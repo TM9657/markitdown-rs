@@ -177,7 +177,9 @@ impl DocumentConverter for DocxConverter {
         // If LLM client is provided, get descriptions for all images
         if let Some(ref opts) = options {
             if let Some(ref llm_client) = opts.llm_client {
-                document = document.with_image_descriptions(llm_client.as_ref()).await?;
+                document = document
+                    .with_image_descriptions(llm_client.as_ref())
+                    .await?;
             }
         }
 
@@ -206,7 +208,9 @@ impl DocumentConverter for DocxConverter {
         // If LLM client is provided, get descriptions for all images
         if let Some(ref opts) = options {
             if let Some(ref llm_client) = opts.llm_client {
-                document = document.with_image_descriptions(llm_client.as_ref()).await?;
+                document = document
+                    .with_image_descriptions(llm_client.as_ref())
+                    .await?;
             }
         }
 

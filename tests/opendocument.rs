@@ -1,25 +1,27 @@
 //! Tests for OpenDocument format converters (.odt, .ods, .odp)
 //!
-//! Test files sourced from Apache Tika test corpus:
-//! https://github.com/apache/tika/tree/main/tika-parsers/tika-parsers-standard/tika-parsers-standard-modules
+//! Test files sourced from kreuzberg test documents
 
 use bytes::Bytes;
 use markitdown::{ConversionOptions, MarkItDown};
 use std::fs;
+use std::io::Write;
+use zip::write::SimpleFileOptions;
 
-const TEST_DIR: &str = "tests/test_files";
+const TEST_DIR: &str = "tests/test_documents";
 
 fn test_file(name: &str) -> String {
     format!("{}/{}", TEST_DIR, name)
 }
 
-// ODT (OpenDocument Text) tests (using testPhoneNumberExtractor.odt from Apache Tika)
+// ============================================================================
+// ODT (OpenDocument Text) tests
+// ============================================================================
+
 #[tokio::test]
 async fn test_odt_conversion() {
     let md = MarkItDown::new();
-    let result = md
-        .convert(&test_file("testPhoneNumberExtractor.odt"), None)
-        .await;
+    let result = md.convert(&test_file("documents/fake.odt"), None).await;
     assert!(result.is_ok(), "ODT conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let markdown = doc.to_markdown();
@@ -31,8 +33,7 @@ async fn test_odt_conversion() {
 #[tokio::test]
 async fn test_odt_bytes_conversion() {
     let md = MarkItDown::new();
-    let bytes = fs::read(test_file("testPhoneNumberExtractor.odt"))
-        .expect("Failed to read testPhoneNumberExtractor.odt");
+    let bytes = fs::read(test_file("documents/fake.odt")).expect("Failed to read fake.odt");
     let options = ConversionOptions::default().with_extension(".odt");
     let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
     assert!(
@@ -42,7 +43,94 @@ async fn test_odt_bytes_conversion() {
     );
 }
 
-// ODP (OpenDocument Presentation) tests - create test file in memory
+#[tokio::test]
+async fn test_odt_simple() {
+    let md = MarkItDown::new();
+    let result = md.convert(&test_file("documents/simple.odt"), None).await;
+    assert!(result.is_ok(), "ODT conversion failed: {:?}", result.err());
+}
+
+#[tokio::test]
+async fn test_odt_bold() {
+    let md = MarkItDown::new();
+    let result = md.convert(&test_file("odt/bold.odt"), None).await;
+    assert!(result.is_ok(), "ODT conversion failed: {:?}", result.err());
+}
+
+#[tokio::test]
+async fn test_odt_table() {
+    let md = MarkItDown::new();
+    let result = md.convert(&test_file("odt/simpleTable.odt"), None).await;
+    assert!(
+        result.is_ok(),
+        "ODT table conversion failed: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test]
+async fn test_odt_unicode() {
+    let md = MarkItDown::new();
+    let result = md.convert(&test_file("odt/unicode.odt"), None).await;
+    assert!(
+        result.is_ok(),
+        "ODT unicode conversion failed: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test]
+async fn test_odt_formula() {
+    let md = MarkItDown::new();
+    let result = md.convert(&test_file("odt/formula.odt"), None).await;
+    assert!(
+        result.is_ok(),
+        "ODT formula conversion failed: {:?}",
+        result.err()
+    );
+}
+
+// ============================================================================
+// ODP (OpenDocument Presentation) tests
+// ============================================================================
+
+fn create_minimal_odp() -> Bytes {
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = SimpleFileOptions::default();
+
+        // Add mimetype
+        zip.start_file("mimetype", options).unwrap();
+        zip.write_all(b"application/vnd.oasis.opendocument.presentation")
+            .unwrap();
+
+        // Add minimal content.xml
+        let content_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+    xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">
+  <office:body>
+    <office:presentation>
+      <draw:page draw:name="Slide 1">
+        <draw:frame>
+          <draw:text-box>
+            <text:p>Test Presentation Content</text:p>
+          </draw:text-box>
+        </draw:frame>
+      </draw:page>
+    </office:presentation>
+  </office:body>
+</office:document-content>"#;
+
+        zip.start_file("content.xml", options).unwrap();
+        zip.write_all(content_xml.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+
+    Bytes::from(buffer.into_inner())
+}
+
 #[tokio::test]
 async fn test_odp_bytes_conversion() {
     // Create a minimal ODP in memory
@@ -60,58 +148,15 @@ async fn test_odp_bytes_conversion() {
     );
 }
 
-// Helper to create a minimal ODP file in memory
-fn create_minimal_odp() -> Bytes {
-    use std::io::{Cursor, Write};
-    use zip::write::SimpleFileOptions;
-    use zip::ZipWriter;
+// ============================================================================
+// OTT (OpenDocument Template) tests
+// ============================================================================
 
-    let mut buffer = Cursor::new(Vec::new());
-    {
-        let mut zip = ZipWriter::new(&mut buffer);
-
-        // Add mimetype (must be first and uncompressed)
-        let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        zip.start_file("mimetype", options).unwrap();
-        zip.write_all(b"application/vnd.oasis.opendocument.presentation")
-            .unwrap();
-
-        // Add content.xml
-        let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        zip.start_file("content.xml", options).unwrap();
-        let content = r#"<?xml version="1.0" encoding="UTF-8"?>
-<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" 
-                         xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
-                         xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">
-  <office:body>
-    <office:presentation>
-      <draw:page>
-        <draw:frame>
-          <draw:text-box>
-            <text:p>Test Slide Content</text:p>
-          </draw:text-box>
-        </draw:frame>
-      </draw:page>
-    </office:presentation>
-  </office:body>
-</office:document-content>"#;
-        zip.write_all(content.as_bytes()).unwrap();
-
-        zip.finish().unwrap();
-    }
-
-    Bytes::from(buffer.into_inner())
-}
-
-// Test template formats (should work like their base formats)
 #[tokio::test]
 async fn test_ott_template_conversion() {
-    // OTT (ODT template) should work with ODT converter
     let md = MarkItDown::new();
-    let bytes = fs::read(test_file("testPhoneNumberExtractor.odt"))
-        .expect("Failed to read testPhoneNumberExtractor.odt");
+    // Use an ODT file as template (OTT has same format)
+    let bytes = fs::read(test_file("documents/simple.odt")).expect("Failed to read simple.odt");
     let options = ConversionOptions::default().with_extension(".ott");
     let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
     assert!(result.is_ok(), "OTT conversion failed: {:?}", result.err());

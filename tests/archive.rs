@@ -1,37 +1,37 @@
 //! Tests for archive format converters
 //!
-//! Test files sourced from Apache Tika test corpus:
-//! https://github.com/apache/tika/tree/main/tika-parsers/tika-parsers-standard/tika-parsers-standard-modules
+//! Tests use in-memory archives since no archive test files are provided
+//! in the test_documents directory.
 
 use bytes::Bytes;
 use markitdown::{ConversionOptions, MarkItDown};
-use std::fs;
 
-const TEST_DIR: &str = "tests/test_files";
-
-// Helper to get test file path
-fn test_file(name: &str) -> String {
-    format!("{}/{}", TEST_DIR, name)
-}
-
-// TAR tests (using testTAR_no_magic.tar from Apache Tika)
-#[tokio::test]
-async fn test_tar_conversion() {
-    let md = MarkItDown::new();
-    let result = md.convert(&test_file("testTAR_no_magic.tar"), None).await;
-    assert!(result.is_ok(), "TAR conversion failed: {:?}", result.err());
-    let doc = result.unwrap();
-    let markdown = doc.to_markdown();
-    assert!(!markdown.is_empty(), "TAR should produce output");
-}
-
+// TAR tests (create minimal in-memory test)
 #[tokio::test]
 async fn test_tar_bytes_conversion() {
+    use std::io::Write;
+    use tar::Builder;
+
     let md = MarkItDown::new();
-    let bytes =
-        fs::read(test_file("testTAR_no_magic.tar")).expect("Failed to read testTAR_no_magic.tar");
+
+    // Create tar content in memory
+    let mut builder = Builder::new(Vec::new());
+
+    // Add a text file to the archive
+    let content = b"Hello, this is tar archive text content for testing.";
+    let mut header = tar::Header::new_gnu();
+    header.set_path("test.txt").unwrap();
+    header.set_size(content.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+
+    builder.append(&header, &content[..]).unwrap();
+    let archive_data = builder.into_inner().unwrap();
+
     let options = ConversionOptions::default().with_extension(".tar");
-    let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
+    let result = md
+        .convert_bytes(Bytes::from(archive_data), Some(options))
+        .await;
     assert!(
         result.is_ok(),
         "TAR bytes conversion failed: {:?}",
@@ -39,25 +39,74 @@ async fn test_tar_bytes_conversion() {
     );
 }
 
-// ZIP archive tests (using testTika4424.zip from Apache Tika)
-#[tokio::test]
-async fn test_zip_with_multiple_files() {
-    let md = MarkItDown::new();
-    let result = md.convert(&test_file("testTika4424.zip"), None).await;
-    assert!(result.is_ok(), "ZIP conversion failed: {:?}", result.err());
-}
-
+// ZIP archive tests (create minimal in-memory test)
 #[tokio::test]
 async fn test_zip_bytes_conversion() {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
     let md = MarkItDown::new();
-    let bytes = fs::read(test_file("testTika4424.zip")).expect("Failed to read testTika4424.zip");
+
+    // Create zip content in memory
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = ZipWriter::new(&mut buffer);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("test.txt", options).unwrap();
+        zip.write_all(b"Hello, this is zip archive text content for testing.")
+            .unwrap();
+        zip.finish().unwrap();
+    }
+
     let options = ConversionOptions::default().with_extension(".zip");
-    let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
+    let result = md
+        .convert_bytes(Bytes::from(buffer.into_inner()), Some(options))
+        .await;
     assert!(
         result.is_ok(),
         "ZIP bytes conversion failed: {:?}",
         result.err()
     );
+}
+
+#[tokio::test]
+async fn test_zip_with_multiple_files() {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    let md = MarkItDown::new();
+
+    // Create zip with multiple files
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = ZipWriter::new(&mut buffer);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        zip.start_file("file1.txt", options).unwrap();
+        zip.write_all(b"Content of file 1").unwrap();
+
+        zip.start_file("file2.txt", options).unwrap();
+        zip.write_all(b"Content of file 2").unwrap();
+
+        zip.start_file("subdir/file3.txt", options).unwrap();
+        zip.write_all(b"Content of file 3 in subdir").unwrap();
+
+        zip.finish().unwrap();
+    }
+
+    let options = ConversionOptions::default().with_extension(".zip");
+    let result = md
+        .convert_bytes(Bytes::from(buffer.into_inner()), Some(options))
+        .await;
+    assert!(result.is_ok(), "ZIP conversion failed: {:?}", result.err());
+
+    let doc = result.unwrap();
+    let markdown = doc.to_markdown();
+    assert!(!markdown.is_empty(), "ZIP should produce output");
 }
 
 // GZIP tests (create minimal in-memory test)

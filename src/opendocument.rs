@@ -167,7 +167,7 @@ impl OdsConverter {
 
         for (sheet_idx, sheet_name) in sheet_names.iter().enumerate() {
             let mut page = Page::new((sheet_idx + 1) as u32);
-            
+
             // Add sheet name as heading
             page.add_content(ContentBlock::Heading {
                 level: 2,
@@ -296,7 +296,9 @@ impl OdpConverter {
         // If no slides found, create empty document
         if document.pages.is_empty() {
             let mut page = Page::new(1);
-            page.add_content(ContentBlock::Text("*Unable to read content from ODP file.*".to_string()));
+            page.add_content(ContentBlock::Text(
+                "*Unable to read content from ODP file.*".to_string(),
+            ));
             document.add_page(page);
         }
 

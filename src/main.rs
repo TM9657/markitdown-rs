@@ -1,4 +1,4 @@
-use clap::{command, Parser};
+use clap::Parser;
 use std::fs;
 
 use markitdown::{model::ConversionOptions, MarkItDown};

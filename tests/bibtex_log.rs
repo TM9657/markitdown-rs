@@ -1,23 +1,23 @@
 //! Tests for BibTeX and log file converters
 //!
-//! Test files sourced from Apache Tika test corpus:
-//! https://github.com/apache/tika/tree/main/tika-parsers/tika-parsers-standard/tika-parsers-standard-modules
+//! Test files sourced from kreuzberg test documents
 
 use bytes::Bytes;
 use markitdown::{ConversionOptions, MarkItDown};
-use std::fs;
 
-const TEST_DIR: &str = "tests/test_files";
+const TEST_DIR: &str = "tests/test_documents";
 
 fn test_file(name: &str) -> String {
     format!("{}/{}", TEST_DIR, name)
 }
 
-// BibTeX tests (using testBIBTEX.bib from Apache Tika)
+// BibTeX tests
 #[tokio::test]
 async fn test_bibtex_conversion() {
     let md = MarkItDown::new();
-    let result = md.convert(&test_file("testBIBTEX.bib"), None).await;
+    let result = md
+        .convert(&test_file("bibtex/comprehensive.bib"), None)
+        .await;
     assert!(
         result.is_ok(),
         "BibTeX conversion failed: {:?}",
@@ -33,7 +33,8 @@ async fn test_bibtex_conversion() {
 #[tokio::test]
 async fn test_bibtex_bytes_conversion() {
     let md = MarkItDown::new();
-    let bytes = fs::read(test_file("testBIBTEX.bib")).expect("Failed to read testBIBTEX.bib");
+    let bytes = std::fs::read(test_file("bibtex/comprehensive.bib"))
+        .expect("Failed to read comprehensive.bib");
     let options = ConversionOptions::default().with_extension(".bib");
     let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
     assert!(

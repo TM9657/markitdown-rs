@@ -1,8 +1,25 @@
 # markitdown-rs
 
-markitdown-rs is a Rust library designed to facilitate the conversion of various document formats into markdown text. It is a Rust implementation of the original [markitdown](https://github.com/microsoft/markitdown) Python library.
+A high-performance Rust library that converts **40+ document formats** to clean, readable Markdown. Perfect for preparing documents for LLM consumption, documentation generation, knowledge bases, or archival.
 
-## Features
+🚀 **Rust implementation** of the original [markitdown](https://github.com/microsoft/markitdown) Python library with extensive format support and async-first design.
+
+[![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-198%20passing-brightgreen.svg)](#testing)
+
+## ✨ Features
+
+- **40+ Format Support**: Word, Excel, PowerPoint (modern & legacy), PDF, EPUB, HTML, Markdown, LaTeX, and more
+- **Async-First Design**: Non-blocking I/O with Tokio runtime
+- **Archive Extraction**: Automatically extract and convert ZIP, TAR, GZIP, and more
+- **Image Extraction**: Optional intelligent image extraction with LLM-powered descriptions
+- **LLM Integration**: Works with OpenAI, Gemini, Claude, Cohere, and custom providers
+- **Streaming Support**: Process large files efficiently
+- **Rich Output Structure**: Preserves pagination, images, tables, and metadata
+- **Production-Ready**: Comprehensive test suite with 198+ passing tests
+
+## 📋 Supported Formats
 
 ### Document Formats
 
@@ -221,6 +238,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+**Environment Variables for LLM Tests (OpenRouter):**
+
+The integration test in `tests/llm.rs` expects these variables (via `.env` or your shell):
+
+```bash
+export OPENROUTER_API_KEY="your_api_key"
+export OPENROUTER_ENDPOINT="https://openrouter.ai/api/v1"
+export OPENROUTER_MODEL="@preset/prod-free"
+```
+
+If any of them are missing, the LLM test is skipped.
+
 **Supported LLM Providers** (via rig-core):
 - OpenAI (GPT-4, GPT-4o, etc.)
 - Google Gemini (gemini-2.0-flash, gemini-pro, etc.)
@@ -400,6 +429,22 @@ md.register_converter(Box::new(MyCustomConverter));
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
+
+## 📚 Documentation
+
+For detailed information, see:
+
+- **[FORMATS.md](docs/FORMATS.md)** – Complete reference of all 40+ supported formats with capabilities and limitations
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** – Internal design, converter pattern, and how to implement new formats
+- **[TESTING.md](docs/TESTING.md)** – Comprehensive testing guide with 198+ test examples
+- **[FORMAT_COVERAGE.md](docs/FORMAT_COVERAGE.md)** – Converter matrix with extensions and test locations
+
+### Quick Links
+
+- [API Documentation](#rust-api) – Usage examples and API reference
+- [CLI Usage](#command-line) – Command-line tool guide
+- [Adding Formats](#register-a-custom-converter) – Extend with custom converters
+- [LLM Integration](#convert-with-llm-for-image-descriptions) – Use AI for image descriptions
 
 ## Acknowledgments
 

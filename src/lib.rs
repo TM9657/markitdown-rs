@@ -3,26 +3,35 @@ pub mod bibtex;
 pub mod calendar;
 pub mod csv;
 pub mod data;
+pub mod docbook;
 pub mod docx;
 pub mod email;
 pub mod epub;
 pub mod error;
 pub mod excel;
+pub mod fictionbook;
 pub mod html;
 pub mod image;
 pub mod iwork;
+pub mod jupyter;
+pub mod latex;
 pub mod legacy_office;
 pub mod llm;
 pub mod log;
 pub mod markdown;
 pub mod model;
 pub mod opendocument;
+pub mod opml;
+pub mod orgmode;
 pub mod pdf;
 pub mod pptx;
 pub mod prompts;
 pub mod rss;
+pub mod rst;
 pub mod rtf;
 pub mod sqlite;
+pub mod table_merge;
+pub mod typst;
 pub mod vcard;
 
 use archive::ArchiveConverter;
@@ -31,15 +40,19 @@ use bytes::Bytes;
 use calendar::ICalendarConverter;
 use csv::CsvConverter;
 use data::{CodeConverter, JsonConverter, TextConverter, TomlConverter, YamlConverter};
+use docbook::DocBookConverter;
 use docx::DocxConverter;
 use email::EmailConverter;
 use epub::EpubConverter;
 use error::MarkitdownError;
 use excel::ExcelConverter;
+use fictionbook::FictionBookConverter;
 use html::HtmlConverter;
 use image::ImageConverter;
 use infer;
 use iwork::{KeynoteConverter, NumbersConverter, PagesConverter};
+use jupyter::JupyterConverter;
+use latex::LatexConverter;
 use legacy_office::{
     DocConverter, DotxConverter, PotxConverter, PptConverter, XlsConverter, XltxConverter,
 };
@@ -51,9 +64,12 @@ use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::ObjectStore;
 use opendocument::{OdpConverter, OdsConverter, OdtConverter};
+use opml::OpmlConverter;
+use orgmode::OrgModeConverter;
 use pdf::PdfConverter;
 use pptx::PptxConverter;
 use rss::RssConverter;
+use rst::RstConverter;
 use rtf::RtfConverter;
 use sqlite::SqliteConverter;
 use std::io::Cursor;
@@ -61,6 +77,7 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::{collections::HashMap, fs};
+use typst::TypstConverter;
 use vcard::VCardConverter;
 use zip::ZipArchive;
 
@@ -147,6 +164,20 @@ impl MarkItDown {
         md.register_converter(Box::new(PagesConverter));
         md.register_converter(Box::new(NumbersConverter));
         md.register_converter(Box::new(KeynoteConverter));
+
+        // Markup language formats
+        md.register_converter(Box::new(LatexConverter));
+        md.register_converter(Box::new(OrgModeConverter));
+        md.register_converter(Box::new(RstConverter));
+        md.register_converter(Box::new(TypstConverter));
+
+        // Structured document formats
+        md.register_converter(Box::new(DocBookConverter));
+        md.register_converter(Box::new(OpmlConverter));
+        md.register_converter(Box::new(FictionBookConverter));
+
+        // Notebook formats
+        md.register_converter(Box::new(JupyterConverter));
 
         md
     }

@@ -2002,6 +2002,7 @@ dependencies = [
  "criterion",
  "csv",
  "docx-rust",
+ "dotenvy",
  "feed-rs",
  "flate2",
  "futures",

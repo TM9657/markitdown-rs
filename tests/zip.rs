@@ -8,6 +8,8 @@ async fn test_zip_conversion() {
         url: None,
         llm_client: None,
         extract_images: false,
+        force_llm_ocr: false,
+        merge_multipage_tables: false,
     };
 
     let markitdown = MarkItDown::new();
@@ -25,6 +27,8 @@ async fn test_zip_bytes_conversion() {
         url: None,
         llm_client: None,
         extract_images: false,
+        force_llm_ocr: false,
+        merge_multipage_tables: false,
     };
 
     let markitdown = MarkItDown::new();
