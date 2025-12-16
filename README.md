@@ -378,7 +378,7 @@ This structure is ideal for:
 - **LLM flexibility** - works with any rig-core compatible model (OpenAI, Gemini, Claude, Cohere, custom providers)
 
 ### Testing
-- **Comprehensive test suite** using real-world files from [Apache Tika test corpus](https://github.com/apache/tika)
+- **Comprehensive test suite** using real-world files from [Kreuzberg](https://github.com/kreuzberg-dev/kreuzberg)
 - Tests for all supported formats with both file and bytes conversion
 - In-memory test generation for compression formats
 
@@ -449,7 +449,7 @@ For detailed information, see:
 ## Acknowledgments
 
 - Original Python implementation: [microsoft/markitdown](https://github.com/microsoft/markitdown)
-- Test files from: [Apache Tika test corpus](https://github.com/apache/tika)
+- Test files from: [Kreuzberg](https://github.com/kreuzberg-dev/kreuzberg)
 
 ## License
 

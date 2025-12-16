@@ -129,7 +129,7 @@ markitdown-rs/
 - **[Rust Book](https://doc.rust-lang.org/book/)** – Learn Rust
 - **[Tokio Documentation](https://tokio.rs/)** – Async runtime
 - **[Original markitdown](https://github.com/microsoft/markitdown)** – Python reference implementation
-- **[Apache Tika](https://github.com/apache/tika)** – Test file sources
+- **[Kreuzberg](https://github.com/kreuzberg-dev/kreuzberg)** – Test file sources
 
 ## ❓ Frequently Asked Questions
 
