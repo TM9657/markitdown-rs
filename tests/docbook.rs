@@ -9,6 +9,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -25,7 +26,10 @@ fn test_file(name: &str) -> String {
 async fn test_docbook_chapter() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("docbook-chapter.docbook"), Some(default_options(".docbook")))
+        .convert(
+            &test_file("docbook-chapter.docbook"),
+            Some(default_options(".docbook")),
+        )
         .await;
 
     assert!(
@@ -42,7 +46,10 @@ async fn test_docbook_chapter() {
 async fn test_docbook_reader() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("docbook-reader.docbook"), Some(default_options(".docbook")))
+        .convert(
+            &test_file("docbook-reader.docbook"),
+            Some(default_options(".docbook")),
+        )
         .await;
 
     assert!(
@@ -56,7 +63,10 @@ async fn test_docbook_reader() {
 async fn test_docbook_xref() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("docbook-xref.docbook"), Some(default_options(".docbook")))
+        .convert(
+            &test_file("docbook-xref.docbook"),
+            Some(default_options(".docbook")),
+        )
         .await;
 
     assert!(
@@ -85,7 +95,10 @@ async fn test_docbook_bytes_conversion() {
 async fn test_docbook_tables4() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("tables.docbook4"), Some(default_options(".docbook4")))
+        .convert(
+            &test_file("tables.docbook4"),
+            Some(default_options(".docbook4")),
+        )
         .await;
 
     assert!(
@@ -99,7 +112,10 @@ async fn test_docbook_tables4() {
 async fn test_docbook_tables5() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("tables.docbook5"), Some(default_options(".docbook5")))
+        .convert(
+            &test_file("tables.docbook5"),
+            Some(default_options(".docbook5")),
+        )
         .await;
 
     assert!(

@@ -142,9 +142,7 @@ impl OrgModeConverter {
         // [[url][text]] -> [text](url)
         // [[url]] -> <url>
         let link_with_text = Regex::new(r"\[\[([^\]]+)\]\[([^\]]+)\]\]").unwrap();
-        let result = link_with_text
-            .replace_all(line, "[$2]($1)")
-            .to_string();
+        let result = link_with_text.replace_all(line, "[$2]($1)").to_string();
 
         let link_bare = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
         link_bare.replace_all(&result, "<$1>").to_string()

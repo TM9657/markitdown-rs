@@ -9,6 +9,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -103,7 +104,10 @@ async fn test_typst_advanced() {
 async fn test_typst_reader() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("typst-reader.typ"), Some(default_options(".typ")))
+        .convert(
+            &test_file("typst-reader.typ"),
+            Some(default_options(".typ")),
+        )
         .await;
 
     assert!(

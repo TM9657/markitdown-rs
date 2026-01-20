@@ -298,9 +298,14 @@ impl MarkItDown {
             if opts.file_extension.is_none() {
                 opts.file_extension = extension.clone();
             }
+            if opts.image_context_path.is_none() {
+                opts.image_context_path = Some(path.to_string());
+            }
         } else {
             options = Some(
-                ConversionOptions::default().with_extension(extension.clone().unwrap_or_default()),
+                ConversionOptions::default()
+                    .with_extension(extension.clone().unwrap_or_default())
+                    .with_image_context_path(path.to_string()),
             );
         }
 
@@ -471,6 +476,9 @@ impl MarkItDown {
                     .clone()
                     .map(|mut o| {
                         o.file_extension = Some(extension.clone());
+                        if o.image_context_path.is_none() {
+                            o.image_context_path = Some(file_name.clone());
+                        }
                         o
                     })
                     .or_else(|| {

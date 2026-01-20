@@ -83,7 +83,9 @@ impl RstConverter {
                 if !next_line.is_empty()
                     && next_line.len() >= line.len()
                     && underline_chars.contains(&next_line.chars().next().unwrap_or(' '))
-                    && next_line.chars().all(|c| c == next_line.chars().next().unwrap())
+                    && next_line
+                        .chars()
+                        .all(|c| c == next_line.chars().next().unwrap())
                 {
                     let level = match next_line.chars().next().unwrap() {
                         '=' => 1,

@@ -9,6 +9,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -25,7 +26,10 @@ fn test_file(name: &str) -> String {
 async fn test_latex_basic_sections() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("basic_sections.tex"), Some(default_options(".tex")))
+        .convert(
+            &test_file("basic_sections.tex"),
+            Some(default_options(".tex")),
+        )
         .await;
 
     assert!(
@@ -134,7 +138,10 @@ async fn test_latex_lists() {
 async fn test_latex_reader() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("latex-reader.latex"), Some(default_options(".latex")))
+        .convert(
+            &test_file("latex-reader.latex"),
+            Some(default_options(".latex")),
+        )
         .await;
 
     assert!(
@@ -148,7 +155,10 @@ async fn test_latex_reader() {
 async fn test_latex_comprehensive() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("comprehensive_rustex.tex"), Some(default_options(".tex")))
+        .convert(
+            &test_file("comprehensive_rustex.tex"),
+            Some(default_options(".tex")),
+        )
         .await;
 
     assert!(

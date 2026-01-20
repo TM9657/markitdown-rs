@@ -11,6 +11,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -31,17 +32,19 @@ fn test_file(name: &str) -> String {
 async fn test_yaml_sample_config() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("sample_config.yaml"), Some(default_options(".yaml")))
+        .convert(
+            &test_file("sample_config.yaml"),
+            Some(default_options(".yaml")),
+        )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "YAML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "YAML conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
-    assert!(content.contains("```yaml"), "Should contain YAML code block");
+    assert!(
+        content.contains("```yaml"),
+        "Should contain YAML code block"
+    );
 }
 
 #[tokio::test]
@@ -54,11 +57,7 @@ async fn test_yaml_simple() {
         )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "YAML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "YAML conversion failed: {:?}", result.err());
 }
 
 #[tokio::test]
@@ -87,9 +86,5 @@ async fn test_yaml_yml_extension() {
         )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "YML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "YML conversion failed: {:?}", result.err());
 }

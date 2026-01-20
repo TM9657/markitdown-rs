@@ -64,7 +64,8 @@ impl LatexConverter {
             }
 
             // Handle verbatim/lstlisting environments
-            if trimmed.starts_with("\\begin{verbatim}") || trimmed.starts_with("\\begin{lstlisting}")
+            if trimmed.starts_with("\\begin{verbatim}")
+                || trimmed.starts_with("\\begin{lstlisting}")
             {
                 in_verbatim = true;
                 result.push_str("```\n");

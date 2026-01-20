@@ -513,6 +513,9 @@ impl DocumentConverter for PptxConverter {
         // If LLM client is provided, get descriptions for all images
         if let Some(ref opts) = options {
             if let Some(ref llm_client) = opts.llm_client {
+                if let Some(path) = opts.image_context_path.as_deref() {
+                    document.apply_image_context_path(path);
+                }
                 document = document
                     .with_image_descriptions(llm_client.as_ref())
                     .await?;
@@ -532,6 +535,9 @@ impl DocumentConverter for PptxConverter {
         // If LLM client is provided, get descriptions for all images
         if let Some(ref opts) = options {
             if let Some(ref llm_client) = opts.llm_client {
+                if let Some(path) = opts.image_context_path.as_deref() {
+                    document.apply_image_context_path(path);
+                }
                 document = document
                     .with_image_descriptions(llm_client.as_ref())
                     .await?;

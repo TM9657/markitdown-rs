@@ -9,6 +9,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -28,11 +29,7 @@ async fn test_opml_feeds() {
         .convert(&test_file("feeds.opml"), Some(default_options(".opml")))
         .await;
 
-    assert!(
-        result.is_ok(),
-        "OPML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "OPML conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
     assert!(!content.is_empty(), "Content should not be empty");
@@ -45,11 +42,7 @@ async fn test_opml_outline() {
         .convert(&test_file("outline.opml"), Some(default_options(".opml")))
         .await;
 
-    assert!(
-        result.is_ok(),
-        "OPML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "OPML conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
     // Should have nested list items with indentation
@@ -63,11 +56,7 @@ async fn test_opml_podcasts() {
         .convert(&test_file("podcasts.opml"), Some(default_options(".opml")))
         .await;
 
-    assert!(
-        result.is_ok(),
-        "OPML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "OPML conversion failed: {:?}", result.err());
 }
 
 #[tokio::test]
@@ -89,26 +78,24 @@ async fn test_opml_bytes_conversion() {
 async fn test_opml_reader() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("opml-reader.opml"), Some(default_options(".opml")))
+        .convert(
+            &test_file("opml-reader.opml"),
+            Some(default_options(".opml")),
+        )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "OPML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "OPML conversion failed: {:?}", result.err());
 }
 
 #[tokio::test]
 async fn test_opml_pandoc_writer() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("pandoc-writer.opml"), Some(default_options(".opml")))
+        .convert(
+            &test_file("pandoc-writer.opml"),
+            Some(default_options(".opml")),
+        )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "OPML conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "OPML conversion failed: {:?}", result.err());
 }

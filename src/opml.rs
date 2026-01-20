@@ -44,10 +44,7 @@ impl OpmlConverter {
                         b"title" => {
                             // Read title text
                             if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                                title = t
-                                    .decode()
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_default();
+                                title = t.decode().map(|s| s.to_string()).unwrap_or_default();
                             }
                         }
                         b"outline" => {
@@ -86,8 +83,7 @@ impl OpmlConverter {
                             let indent = "  ".repeat(depth);
                             if !text.is_empty() {
                                 if !url.is_empty() {
-                                    result
-                                        .push_str(&format!("{}- [{}]({})\n", indent, text, url));
+                                    result.push_str(&format!("{}- [{}]({})\n", indent, text, url));
                                 } else {
                                     result.push_str(&format!("{}- {}\n", indent, text));
                                 }

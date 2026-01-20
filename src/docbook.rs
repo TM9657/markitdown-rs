@@ -156,10 +156,7 @@ impl DocBookConverter {
                     }
                 }
                 Ok(Event::Text(e)) => {
-                    let text = e
-                        .decode()
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
+                    let text = e.decode().map(|s| s.to_string()).unwrap_or_default();
 
                     // Apply formatting
                     let formatted = if in_code {

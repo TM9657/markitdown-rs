@@ -25,8 +25,7 @@ async fn test_openrouter_image_description() {
     let api_key = env::var("OPENROUTER_API_KEY");
     let endpoint = env::var("OPENROUTER_ENDPOINT");
     // Use OPENROUTER_VISION_MODEL if set, otherwise fall back to OPENROUTER_MODEL
-    let model = env::var("OPENROUTER_VISION_MODEL")
-        .or_else(|_| env::var("OPENROUTER_MODEL"));
+    let model = env::var("OPENROUTER_VISION_MODEL").or_else(|_| env::var("OPENROUTER_MODEL"));
 
     if api_key.is_err() || endpoint.is_err() || model.is_err() {
         println!("Skipping OpenRouter LLM test: Missing OPENROUTER_API_KEY, OPENROUTER_ENDPOINT, or OPENROUTER_MODEL");
@@ -39,7 +38,10 @@ async fn test_openrouter_image_description() {
 
     // Some models don't support vision - skip with a helpful message
     if model_name.contains("@preset") || model_name.contains("prod-free") {
-        println!("Skipping OpenRouter image description test: Model '{}' likely doesn't support vision.", model_name);
+        println!(
+            "Skipping OpenRouter image description test: Model '{}' likely doesn't support vision.",
+            model_name
+        );
         println!("Set OPENROUTER_VISION_MODEL to a vision-capable model like 'openai/gpt-4o-mini' for this test.");
         return;
     }
@@ -56,7 +58,10 @@ async fn test_openrouter_image_description() {
         format!("{}/v1", endpoint)
     };
 
-    println!("Running OpenRouter image description test with model: {}", model_name);
+    println!(
+        "Running OpenRouter image description test with model: {}",
+        model_name
+    );
 
     let client = openrouter::Client::builder(&api_key)
         .base_url(endpoint.as_str())
@@ -73,7 +78,11 @@ async fn test_openrouter_image_description() {
 
     match result {
         Ok(description) => {
-            println!("✓ OpenRouter Image Description ({} chars):\n{}", description.len(), &description[..description.len().min(500)]);
+            println!(
+                "✓ OpenRouter Image Description ({} chars):\n{}",
+                description.len(),
+                &description[..description.len().min(500)]
+            );
             assert!(!description.is_empty(), "Description should not be empty");
         }
         Err(e) => panic!("OpenRouter image description test failed: {}", e),
@@ -106,7 +115,10 @@ async fn test_openrouter_text_completion() {
         format!("{}/v1", endpoint)
     };
 
-    println!("Running OpenRouter text completion test with model: {}", model_name);
+    println!(
+        "Running OpenRouter text completion test with model: {}",
+        model_name
+    );
 
     let client = openrouter::Client::builder(&api_key)
         .base_url(endpoint.as_str())
@@ -115,7 +127,9 @@ async fn test_openrouter_text_completion() {
     let model = client.completion_model(&model_name);
     let llm_client = create_llm_client(model);
 
-    let result = llm_client.complete("Say 'Hello, World!' and nothing else.").await;
+    let result = llm_client
+        .complete("Say 'Hello, World!' and nothing else.")
+        .await;
 
     match result {
         Ok(response) => {
@@ -166,7 +180,9 @@ async fn test_azure_openai_text_completion() {
     let llm_client = create_llm_client(model);
 
     println!("Sending text completion request to Azure OpenAI...");
-    let result = llm_client.complete("Say 'Hello, World!' and nothing else.").await;
+    let result = llm_client
+        .complete("Say 'Hello, World!' and nothing else.")
+        .await;
 
     match result {
         Ok(response) => {
@@ -219,13 +235,20 @@ async fn test_azure_openai_image_description() {
 
     match result {
         Ok(description) => {
-            println!("✓ Azure OpenAI Image Description ({} chars):\n{}", description.len(), &description[..description.len().min(500)]);
+            println!(
+                "✓ Azure OpenAI Image Description ({} chars):\n{}",
+                description.len(),
+                &description[..description.len().min(500)]
+            );
             assert!(!description.is_empty(), "Description should not be empty");
         }
         Err(e) => {
             eprintln!("Azure OpenAI image description test failed: {}", e);
             eprintln!("This may be due to:");
-            eprintln!("  1. The model '{}' doesn't support vision/image inputs", model_id);
+            eprintln!(
+                "  1. The model '{}' doesn't support vision/image inputs",
+                model_id
+            );
             eprintln!("  2. API quota/limits exceeded");
             eprintln!("  3. Invalid API key or endpoint");
             panic!("Azure OpenAI image description test failed: {}", e);
@@ -273,14 +296,20 @@ async fn test_azure_openai_pdf_conversion() {
         .with_extension(".pdf")
         .with_llm(llm_client)
         .with_force_llm_ocr(true);
-    
+
     println!("Converting PDF with LLM support...");
-    let result = converter.convert_bytes(Bytes::from(pdf_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(pdf_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
-            println!("✓ Azure OpenAI PDF Conversion ({} chars):\n{}", markdown.len(), &markdown[..markdown.len().min(1000)]);
+            println!(
+                "✓ Azure OpenAI PDF Conversion ({} chars):\n{}",
+                markdown.len(),
+                &markdown[..markdown.len().min(1000)]
+            );
             assert!(!markdown.is_empty(), "Markdown should not be empty");
         }
         Err(e) => {
@@ -308,14 +337,19 @@ async fn test_gemini_text_completion() {
 
     let api_key = api_key.unwrap();
 
-    println!("Running Gemini text completion test with model: {}", model_name);
+    println!(
+        "Running Gemini text completion test with model: {}",
+        model_name
+    );
 
     let client = gemini::Client::new(&api_key);
     let model = client.completion_model(&model_name);
     let llm_client = create_llm_client(model);
 
     println!("Sending text completion request to Gemini...");
-    let result = llm_client.complete("Say 'Hello, World!' and nothing else.").await;
+    let result = llm_client
+        .complete("Say 'Hello, World!' and nothing else.")
+        .await;
 
     match result {
         Ok(response) => {
@@ -340,7 +374,10 @@ async fn test_gemini_image_description() {
 
     let api_key = api_key.unwrap();
 
-    println!("Running Gemini image description test with model: {}", model_name);
+    println!(
+        "Running Gemini image description test with model: {}",
+        model_name
+    );
 
     let client = gemini::Client::new(&api_key);
     let model = client.completion_model(&model_name);
@@ -354,13 +391,20 @@ async fn test_gemini_image_description() {
 
     match result {
         Ok(description) => {
-            println!("✓ Gemini Image Description ({} chars):\n{}", description.len(), &description[..description.len().min(500)]);
+            println!(
+                "✓ Gemini Image Description ({} chars):\n{}",
+                description.len(),
+                &description[..description.len().min(500)]
+            );
             assert!(!description.is_empty(), "Description should not be empty");
         }
         Err(e) => {
             eprintln!("Gemini image description test failed: {}", e);
             eprintln!("This may be due to:");
-            eprintln!("  1. The model '{}' doesn't support vision/image inputs", model_name);
+            eprintln!(
+                "  1. The model '{}' doesn't support vision/image inputs",
+                model_name
+            );
             eprintln!("  2. API quota/limits exceeded");
             eprintln!("  3. Invalid API key");
             panic!("Gemini image description test failed: {}", e);
@@ -382,7 +426,10 @@ async fn test_gemini_pdf_conversion() {
 
     let api_key = api_key.unwrap();
 
-    println!("Running Gemini PDF conversion test with model: {}", model_name);
+    println!(
+        "Running Gemini PDF conversion test with model: {}",
+        model_name
+    );
 
     let client = gemini::Client::new(&api_key);
     let model = client.completion_model(&model_name);
@@ -398,12 +445,18 @@ async fn test_gemini_pdf_conversion() {
         .with_force_llm_ocr(true);
 
     println!("Converting PDF with LLM support...");
-    let result = converter.convert_bytes(Bytes::from(pdf_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(pdf_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
-            println!("✓ Gemini PDF Conversion ({} chars):\n{}", markdown.len(), &markdown[..markdown.len().min(1000)]);
+            println!(
+                "✓ Gemini PDF Conversion ({} chars):\n{}",
+                markdown.len(),
+                &markdown[..markdown.len().min(1000)]
+            );
             assert!(!markdown.is_empty(), "Markdown should not be empty");
         }
         Err(e) => {
@@ -431,14 +484,19 @@ async fn test_openai_text_completion() {
 
     let api_key = api_key.unwrap();
 
-    println!("Running OpenAI text completion test with model: {}", model_name);
+    println!(
+        "Running OpenAI text completion test with model: {}",
+        model_name
+    );
 
     let client = openai::Client::new(&api_key);
     let model = client.completion_model(&model_name);
     let llm_client = create_llm_client(model);
 
     println!("Sending text completion request to OpenAI...");
-    let result = llm_client.complete("Say 'Hello, World!' and nothing else.").await;
+    let result = llm_client
+        .complete("Say 'Hello, World!' and nothing else.")
+        .await;
 
     match result {
         Ok(response) => {
@@ -463,7 +521,10 @@ async fn test_openai_image_description() {
 
     let api_key = api_key.unwrap();
 
-    println!("Running OpenAI image description test with model: {}", model_name);
+    println!(
+        "Running OpenAI image description test with model: {}",
+        model_name
+    );
 
     let client = openai::Client::new(&api_key);
     let model = client.completion_model(&model_name);
@@ -477,13 +538,20 @@ async fn test_openai_image_description() {
 
     match result {
         Ok(description) => {
-            println!("✓ OpenAI Image Description ({} chars):\n{}", description.len(), &description[..description.len().min(500)]);
+            println!(
+                "✓ OpenAI Image Description ({} chars):\n{}",
+                description.len(),
+                &description[..description.len().min(500)]
+            );
             assert!(!description.is_empty(), "Description should not be empty");
         }
         Err(e) => {
             eprintln!("OpenAI image description test failed: {}", e);
             eprintln!("This may be due to:");
-            eprintln!("  1. The model '{}' doesn't support vision/image inputs", model_name);
+            eprintln!(
+                "  1. The model '{}' doesn't support vision/image inputs",
+                model_name
+            );
             eprintln!("  2. API quota/limits exceeded");
             eprintln!("  3. Invalid API key");
             panic!("OpenAI image description test failed: {}", e);
@@ -505,7 +573,10 @@ async fn test_openai_pdf_conversion() {
 
     let api_key = api_key.unwrap();
 
-    println!("Running OpenAI PDF conversion test with model: {}", model_name);
+    println!(
+        "Running OpenAI PDF conversion test with model: {}",
+        model_name
+    );
 
     let client = openai::Client::new(&api_key);
     let model = client.completion_model(&model_name);
@@ -521,12 +592,18 @@ async fn test_openai_pdf_conversion() {
         .with_force_llm_ocr(true);
 
     println!("Converting PDF with LLM support...");
-    let result = converter.convert_bytes(Bytes::from(pdf_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(pdf_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
-            println!("✓ OpenAI PDF Conversion ({} chars):\n{}", markdown.len(), &markdown[..markdown.len().min(1000)]);
+            println!(
+                "✓ OpenAI PDF Conversion ({} chars):\n{}",
+                markdown.len(),
+                &markdown[..markdown.len().min(1000)]
+            );
             assert!(!markdown.is_empty(), "Markdown should not be empty");
         }
         Err(e) => {
@@ -576,7 +653,11 @@ async fn test_llm_integration() {
     let llm_client = create_llm_client(model);
 
     let result = llm_client.complete("Say 'test passed'").await;
-    assert!(result.is_ok(), "Legacy LLM integration test failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Legacy LLM integration test failed: {:?}",
+        result.err()
+    );
     println!("✓ Legacy LLM integration test passed");
 }
 
@@ -590,38 +671,56 @@ async fn test_llm_integration() {
 async fn test_legacy_ppt_conversion() {
     let converter = MarkItDown::new();
     let ppt_path = "tests/test_documents/legacy_office/simple.ppt";
-    
+
     let ppt_data = std::fs::read(ppt_path).expect("Failed to load test PPT");
     println!("Loaded test PPT: {} bytes", ppt_data.len());
 
     let options = ConversionOptions::new().with_extension(".ppt");
-    let result = converter.convert_bytes(Bytes::from(ppt_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(ppt_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
             let images = doc.images();
-            println!("=== Legacy PPT Conversion Output ({} chars, {} images) ===", markdown.len(), images.len());
+            println!(
+                "=== Legacy PPT Conversion Output ({} chars, {} images) ===",
+                markdown.len(),
+                images.len()
+            );
             println!("{}", &markdown[..markdown.len().min(2000)]);
             if !images.is_empty() {
                 println!("\n--- Extracted Images ---");
                 for img in &images {
-                    println!("  - {}: {} bytes, type: {}", img.id, img.data.len(), img.mime_type);
+                    println!(
+                        "  - {}: {} bytes, type: {}",
+                        img.id,
+                        img.data.len(),
+                        img.mime_type
+                    );
                 }
             }
             println!("=== End of PPT Output ===\n");
-            
+
             // Check if output contains garbled binary data (common in legacy formats)
-            let has_garbled = markdown.contains("[Content_Types]") || 
-                             markdown.contains("\\x") ||
-                             markdown.contains("PK") ||
-                             markdown.chars().filter(|c| !c.is_ascii_graphic() && !c.is_whitespace()).count() > 50;
-            
+            let has_garbled = markdown.contains("[Content_Types]")
+                || markdown.contains("\\x")
+                || markdown.contains("PK")
+                || markdown
+                    .chars()
+                    .filter(|c| !c.is_ascii_graphic() && !c.is_whitespace())
+                    .count()
+                    > 50;
+
             if has_garbled {
                 println!("⚠ WARNING: PPT output contains garbled/binary data - legacy format parsing issue detected!");
             }
-            
-            assert!(!markdown.is_empty(), "PPT conversion should produce some output");
+
+            assert!(
+                !markdown.is_empty(),
+                "PPT conversion should produce some output"
+            );
         }
         Err(e) => {
             eprintln!("PPT conversion failed: {}", e);
@@ -635,39 +734,59 @@ async fn test_legacy_ppt_conversion() {
 async fn test_legacy_doc_conversion() {
     let converter = MarkItDown::new();
     let doc_path = "tests/test_documents/legacy_office/unit_test_lists.doc";
-    
+
     let doc_data = std::fs::read(doc_path).expect("Failed to load test DOC");
     println!("Loaded test DOC: {} bytes", doc_data.len());
 
     let options = ConversionOptions::new().with_extension(".doc");
-    let result = converter.convert_bytes(Bytes::from(doc_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(doc_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
             let images = doc.images();
-            println!("=== Legacy DOC Conversion Output ({} chars, {} images) ===", markdown.len(), images.len());
+            println!(
+                "=== Legacy DOC Conversion Output ({} chars, {} images) ===",
+                markdown.len(),
+                images.len()
+            );
             println!("{}", &markdown[..markdown.len().min(2000)]);
             if !images.is_empty() {
                 println!("\n--- Extracted Images ---");
                 for img in &images {
-                    println!("  - {}: {} bytes, type: {}", img.id, img.data.len(), img.mime_type);
+                    println!(
+                        "  - {}: {} bytes, type: {}",
+                        img.id,
+                        img.data.len(),
+                        img.mime_type
+                    );
                 }
             }
             println!("=== End of DOC Output ===\n");
-            
+
             // Check if we got meaningful text or just binary garbage
-            let printable_chars: usize = markdown.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).count();
+            let printable_chars: usize = markdown
+                .chars()
+                .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                .count();
             let total_chars = markdown.len();
             let quality_ratio = printable_chars as f64 / total_chars as f64;
-            
-            println!("Text quality ratio: {:.2}% printable characters", quality_ratio * 100.0);
-            
+
+            println!(
+                "Text quality ratio: {:.2}% printable characters",
+                quality_ratio * 100.0
+            );
+
             if quality_ratio < 0.5 {
                 println!("⚠ WARNING: DOC output has low text quality - legacy format parsing issue detected!");
             }
-            
-            assert!(!markdown.is_empty(), "DOC conversion should produce some output");
+
+            assert!(
+                !markdown.is_empty(),
+                "DOC conversion should produce some output"
+            );
         }
         Err(e) => {
             eprintln!("DOC conversion failed: {}", e);
@@ -700,7 +819,10 @@ async fn test_azure_pptx_with_images() {
     let api_version = api_version.unwrap();
     let model_id = model_id.unwrap();
 
-    println!("Running Azure PPTX with images test:\n  endpoint: {}\n  model: {}", endpoint, model_id);
+    println!(
+        "Running Azure PPTX with images test:\n  endpoint: {}\n  model: {}",
+        endpoint, model_id
+    );
 
     let client = azure::Client::builder(api_key, &endpoint)
         .api_version(&api_version)
@@ -719,23 +841,28 @@ async fn test_azure_pptx_with_images() {
         .with_extension(".pptx")
         .with_llm(llm_client)
         .with_images(true);
-    
+
     println!("Converting PPTX with LLM image descriptions...");
-    let result = converter.convert_bytes(Bytes::from(pptx_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(pptx_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
             println!("✓ Azure PPTX Conversion ({} chars):", markdown.len());
             println!("{}", &markdown[..markdown.len().min(3000)]);
-            
+
             // Check for image placeholders or descriptions
-            let has_images = markdown.contains("[Image") || 
-                            markdown.contains("![") ||
-                            markdown.contains("*[Image:");
+            let has_images = markdown.contains("[Image")
+                || markdown.contains("![")
+                || markdown.contains("*[Image:");
             println!("\nImage references found: {}", has_images);
-            
-            assert!(!markdown.is_empty(), "PPTX conversion should produce output");
+
+            assert!(
+                !markdown.is_empty(),
+                "PPTX conversion should produce output"
+            );
         }
         Err(e) => {
             eprintln!("PPTX conversion failed: {}", e);
@@ -764,7 +891,10 @@ async fn test_azure_pitch_deck_pptx() {
     let api_version = api_version.unwrap();
     let model_id = model_id.unwrap();
 
-    println!("Running Azure pitch deck PPTX test:\n  endpoint: {}\n  model: {}", endpoint, model_id);
+    println!(
+        "Running Azure pitch deck PPTX test:\n  endpoint: {}\n  model: {}",
+        endpoint, model_id
+    );
 
     let client = azure::Client::builder(api_key, &endpoint)
         .api_version(&api_version)
@@ -783,27 +913,35 @@ async fn test_azure_pitch_deck_pptx() {
         .with_extension(".pptx")
         .with_llm(llm_client)
         .with_images(true);
-    
+
     println!("Converting pitch deck PPTX with LLM image descriptions...");
-    let result = converter.convert_bytes(Bytes::from(pptx_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(pptx_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
-            println!("✓ Azure Pitch Deck PPTX Conversion ({} chars):", markdown.len());
+            println!(
+                "✓ Azure Pitch Deck PPTX Conversion ({} chars):",
+                markdown.len()
+            );
             println!("{}", &markdown[..markdown.len().min(3000)]);
-            
+
             // Check for image placeholders or descriptions
-            let has_images = markdown.contains("[Image") || 
-                            markdown.contains("![") ||
-                            markdown.contains("*[Image:");
+            let has_images = markdown.contains("[Image")
+                || markdown.contains("![")
+                || markdown.contains("*[Image:");
             println!("\nImage references found: {}", has_images);
-            
+
             // Count pages/slides
             let page_count = markdown.matches("Page:").count();
             println!("Pages/Slides found: {}", page_count);
-            
-            assert!(!markdown.is_empty(), "Pitch deck PPTX conversion should produce output");
+
+            assert!(
+                !markdown.is_empty(),
+                "Pitch deck PPTX conversion should produce output"
+            );
         }
         Err(e) => {
             eprintln!("Pitch deck PPTX conversion failed: {}", e);
@@ -820,7 +958,7 @@ async fn test_azure_pitch_deck_pptx() {
 #[tokio::test]
 async fn test_pptx_extraction_without_llm() {
     let converter = MarkItDown::new();
-    
+
     // Test powerpoint_with_image.pptx
     let pptx_path = "tests/test_documents/presentations/powerpoint_with_image.pptx";
     let pptx_data = std::fs::read(pptx_path).expect("Failed to load powerpoint_with_image.pptx");
@@ -829,32 +967,44 @@ async fn test_pptx_extraction_without_llm() {
     let options = ConversionOptions::new()
         .with_extension(".pptx")
         .with_images(true);
-    
+
     println!("Converting PPTX without LLM (baseline extraction)...");
-    let result = converter.convert_bytes(Bytes::from(pptx_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(pptx_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
-            println!("=== PPTX Baseline Extraction ({} chars) ===", markdown.len());
+            println!(
+                "=== PPTX Baseline Extraction ({} chars) ===",
+                markdown.len()
+            );
             println!("{}", markdown);
             println!("=== End of PPTX Output ===\n");
-            
+
             // Check extraction quality
-            let has_garbled = markdown.contains("[Content_Types]") || 
-                             markdown.chars().filter(|c| !c.is_ascii_graphic() && !c.is_whitespace()).count() > 50;
-            
+            let has_garbled = markdown.contains("[Content_Types]")
+                || markdown
+                    .chars()
+                    .filter(|c| !c.is_ascii_graphic() && !c.is_whitespace())
+                    .count()
+                    > 50;
+
             if has_garbled {
                 println!("⚠ WARNING: PPTX output contains garbled data");
             } else {
                 println!("✓ PPTX extraction looks clean");
             }
-            
+
             // Check for image placeholders
             let image_refs = markdown.matches("[Image").count() + markdown.matches("![").count();
             println!("Image references found: {}", image_refs);
-            
-            assert!(!markdown.is_empty(), "PPTX conversion should produce output");
+
+            assert!(
+                !markdown.is_empty(),
+                "PPTX conversion should produce output"
+            );
         }
         Err(e) => {
             eprintln!("PPTX conversion failed: {}", e);
@@ -867,7 +1017,7 @@ async fn test_pptx_extraction_without_llm() {
 #[tokio::test]
 async fn test_pitch_deck_pptx_extraction_without_llm() {
     let converter = MarkItDown::new();
-    
+
     let pptx_path = "tests/test_documents/presentations/pitch_deck_presentation.pptx";
     let pptx_data = std::fs::read(pptx_path).expect("Failed to load pitch_deck_presentation.pptx");
     println!("Loaded pitch deck PPTX: {} bytes", pptx_data.len());
@@ -875,32 +1025,44 @@ async fn test_pitch_deck_pptx_extraction_without_llm() {
     let options = ConversionOptions::new()
         .with_extension(".pptx")
         .with_images(true);
-    
+
     println!("Converting pitch deck PPTX without LLM (baseline extraction)...");
-    let result = converter.convert_bytes(Bytes::from(pptx_data), Some(options)).await;
+    let result = converter
+        .convert_bytes(Bytes::from(pptx_data), Some(options))
+        .await;
 
     match result {
         Ok(doc) => {
             let markdown = doc.to_markdown();
-            println!("=== Pitch Deck PPTX Baseline Extraction ({} chars) ===", markdown.len());
+            println!(
+                "=== Pitch Deck PPTX Baseline Extraction ({} chars) ===",
+                markdown.len()
+            );
             println!("{}", &markdown[..markdown.len().min(5000)]);
             println!("=== End of Pitch Deck Output ===\n");
-            
+
             // Check extraction quality
-            let has_garbled = markdown.contains("[Content_Types]") || 
-                             markdown.chars().filter(|c| !c.is_ascii_graphic() && !c.is_whitespace()).count() > 50;
-            
+            let has_garbled = markdown.contains("[Content_Types]")
+                || markdown
+                    .chars()
+                    .filter(|c| !c.is_ascii_graphic() && !c.is_whitespace())
+                    .count()
+                    > 50;
+
             if has_garbled {
                 println!("⚠ WARNING: Pitch deck output contains garbled data");
             } else {
                 println!("✓ Pitch deck extraction looks clean");
             }
-            
+
             // Count slides
             let page_count = markdown.matches("Page:").count();
             println!("Pages/Slides found: {}", page_count);
-            
-            assert!(!markdown.is_empty(), "Pitch deck conversion should produce output");
+
+            assert!(
+                !markdown.is_empty(),
+                "Pitch deck conversion should produce output"
+            );
         }
         Err(e) => {
             eprintln!("Pitch deck conversion failed: {}", e);

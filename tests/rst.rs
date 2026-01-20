@@ -9,6 +9,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -28,11 +29,7 @@ async fn test_rst_reader() {
         .convert(&test_file("rst-reader.rst"), Some(default_options(".rst")))
         .await;
 
-    assert!(
-        result.is_ok(),
-        "RST conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "RST conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
     assert!(!content.is_empty(), "Content should not be empty");

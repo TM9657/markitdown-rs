@@ -28,6 +28,8 @@ pub struct ExtractedImage {
     pub height: Option<u32>,
     /// Page number where the image appears (1-indexed)
     pub page_number: Option<u32>,
+    /// Optional source path or context hint for this image
+    pub source_path: Option<String>,
 }
 
 impl ExtractedImage {
@@ -41,6 +43,7 @@ impl ExtractedImage {
             width: None,
             height: None,
             page_number: None,
+            source_path: None,
         }
     }
 
@@ -178,6 +181,23 @@ impl Page {
     /// Add a content block to the page
     pub fn add_content(&mut self, block: ContentBlock) {
         self.content.push(block);
+    }
+
+    /// Apply a source path hint to all images on this page (if not already set)
+    pub fn apply_image_context_path(&mut self, path: &str) {
+        for block in &mut self.content {
+            if let ContentBlock::Image(img) = block {
+                if img.source_path.is_none() {
+                    img.source_path = Some(path.to_string());
+                }
+            }
+        }
+
+        if let Some(rendered_image) = &mut self.rendered_image {
+            if rendered_image.source_path.is_none() {
+                rendered_image.source_path = Some(path.to_string());
+            }
+        }
     }
 
     /// Get all images from this page
@@ -318,6 +338,13 @@ impl Document {
         self.pages.iter().flat_map(|p| p.images()).collect()
     }
 
+    /// Apply a source path hint to all images in the document (if not already set)
+    pub fn apply_image_context_path(&mut self, path: &str) {
+        for page in &mut self.pages {
+            page.apply_image_context_path(path);
+        }
+    }
+
     /// Convert the entire document to markdown
     pub fn to_markdown(&self) -> String {
         let mut md = String::new();
@@ -435,6 +462,8 @@ pub struct ConversionOptions {
     pub url: Option<String>,
     /// Optional LLM client for image descriptions
     pub llm_client: Option<SharedLlmClient>,
+    /// Optional path context hint for LLM image descriptions
+    pub image_context_path: Option<String>,
     /// Whether to extract images
     pub extract_images: bool,
     /// Force LLM OCR for all PDF pages (useful for PDFs with images)
@@ -452,6 +481,7 @@ impl std::fmt::Debug for ConversionOptions {
                 "llm_client",
                 &self.llm_client.as_ref().map(|_| "<LlmClient>"),
             )
+            .field("image_context_path", &self.image_context_path)
             .field("extract_images", &self.extract_images)
             .field("force_llm_ocr", &self.force_llm_ocr)
             .finish()
@@ -464,6 +494,7 @@ impl Default for ConversionOptions {
             file_extension: None,
             url: None,
             llm_client: None,
+            image_context_path: None,
             extract_images: true,
             force_llm_ocr: false,
             merge_multipage_tables: false,
@@ -483,6 +514,12 @@ impl ConversionOptions {
 
     pub fn with_llm(mut self, client: SharedLlmClient) -> Self {
         self.llm_client = Some(client);
+        self
+    }
+
+    /// Provide a path context hint for LLM image descriptions
+    pub fn with_image_context_path(mut self, path: impl Into<String>) -> Self {
+        self.image_context_path = Some(path.into());
         self
     }
 

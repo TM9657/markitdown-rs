@@ -298,6 +298,12 @@ impl<M: CompletionModel> LlmWrapper<M> {
                 page
             ));
         }
+        if let Some(path) = &img.source_path {
+            prompt.push_str(&format!(
+                " The source path is: '{}'. Use this as a contextual hint if relevant.",
+                path
+            ));
+        }
 
         content.push(UserContent::text(prompt));
 
@@ -306,6 +312,79 @@ impl<M: CompletionModel> LlmWrapper<M> {
             .build();
 
         self.send_request(request).await
+    }
+
+    async fn describe_extracted_images_individual(
+        &self,
+        images: &[&ExtractedImage],
+    ) -> Result<Vec<String>, MarkitdownError>
+    where
+        M: Send + Sync + 'static,
+    {
+        let futures: Vec<_> = images
+            .iter()
+            .map(|img| self.describe_single_extracted_image(img))
+            .collect();
+
+        let results = join_all(futures).await;
+        results.into_iter().collect()
+    }
+
+    async fn describe_extracted_images_batched(
+        &self,
+        images: &[&ExtractedImage],
+    ) -> Result<Vec<String>, MarkitdownError>
+    where
+        M: Send + Sync + 'static,
+    {
+        let mut all_descriptions = Vec::with_capacity(images.len());
+        let batch_size = self.config.images_per_message;
+
+        for chunk in images.chunks(batch_size) {
+            if chunk.len() == 1 {
+                let desc = self.describe_single_extracted_image(chunk[0]).await?;
+                all_descriptions.push(desc);
+                continue;
+            }
+
+            let mut content = OneOrMany::one(UserContent::text(&self.config.batch_image_prompt));
+
+            for (i, img) in chunk.iter().enumerate() {
+                let base64_data = img.to_base64();
+                let image_type = parse_mime_to_image_type(&img.mime_type);
+
+                let mut context = format!("\n--- Image {} ---", i + 1);
+                if let Some(alt) = &img.alt_text {
+                    context.push_str(&format!("\nExisting alt text: {}", alt));
+                }
+                if let (Some(w), Some(h)) = (img.width, img.height) {
+                    context.push_str(&format!("\nDimensions: {}x{} pixels", w, h));
+                }
+                if let Some(page) = img.page_number {
+                    context.push_str(&format!("\nFrom page: {}", page));
+                }
+                if let Some(path) = &img.source_path {
+                    context.push_str(&format!("\nSource path hint: {}", path));
+                }
+
+                content.push(UserContent::text(context));
+                content.push(UserContent::image_base64(
+                    base64_data,
+                    Some(image_type),
+                    Some(ImageDetail::Auto),
+                ));
+            }
+
+            let request = self
+                .build_request(&self.config.batch_image_prompt, content)
+                .build();
+
+            let response = self.send_request(request).await?;
+            let descriptions = parse_batch_response(&response, chunk.len());
+            all_descriptions.extend(descriptions);
+        }
+
+        Ok(all_descriptions)
     }
 }
 
@@ -573,102 +652,77 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
         let batch_size = self.config.images_per_message;
 
         if batch_size == 1 {
-            // Process one at a time in parallel, with context-aware prompts
-            let futures: Vec<_> = images
-                .iter()
-                .map(|img| self.describe_single_extracted_image(img))
-                .collect();
-
-            let results = join_all(futures).await;
-            results.into_iter().collect()
+            self.describe_extracted_images_individual(images).await
         } else {
-            // Process in batches with context
-            let mut all_descriptions = Vec::with_capacity(images.len());
-
-            for chunk in images.chunks(batch_size) {
-                if chunk.len() == 1 {
-                    let desc = self.describe_single_extracted_image(chunk[0]).await?;
-                    all_descriptions.push(desc);
-                } else {
-                    // Multiple images in one request with context
-                    let mut content =
-                        OneOrMany::one(UserContent::text(&self.config.batch_image_prompt));
-
-                    for (i, img) in chunk.iter().enumerate() {
-                        let base64_data = img.to_base64();
-                        let image_type = parse_mime_to_image_type(&img.mime_type);
-
-                        // Add context from image metadata
-                        let mut context = format!("\n--- Image {} ---", i + 1);
-                        if let Some(alt) = &img.alt_text {
-                            context.push_str(&format!("\nExisting alt text: {}", alt));
-                        }
-                        if let (Some(w), Some(h)) = (img.width, img.height) {
-                            context.push_str(&format!("\nDimensions: {}x{} pixels", w, h));
-                        }
-                        if let Some(page) = img.page_number {
-                            context.push_str(&format!("\nFrom page: {}", page));
-                        }
-
-                        content.push(UserContent::text(context));
-                        content.push(UserContent::image_base64(
-                            base64_data,
-                            Some(image_type),
-                            Some(ImageDetail::Auto),
-                        ));
-                    }
-
-                    let request = self
-                        .build_request(&self.config.batch_image_prompt, content)
-                        .build();
-
-                    let response = self.send_request(request).await?;
-                    let descriptions = parse_batch_response(&response, chunk.len());
-                    all_descriptions.extend(descriptions);
-                }
-            }
-
-            Ok(all_descriptions)
+            self.describe_extracted_images_batched(images).await
         }
     }
 }
 
 /// Parse a batch response to extract individual image descriptions
 fn parse_batch_response(response: &str, expected_count: usize) -> Vec<String> {
-    // Try to split by "## Image N" headers
-    let mut descriptions = Vec::with_capacity(expected_count);
-    let parts: Vec<&str> = response.split("## Image").collect();
+    let descriptions = parse_batch_response_with_headers(response, expected_count)
+        .or_else(|| parse_batch_response_with_separators(response, expected_count))
+        .unwrap_or_else(|| vec![response.to_string(); expected_count]);
 
-    if parts.len() > 1 {
-        // Found headers, extract content after each
-        for part in parts.iter().skip(1) {
-            // Skip the number and extract content
-            let content = part
-                .trim()
-                .splitn(2, '\n')
-                .nth(1)
-                .unwrap_or(part.trim())
-                .trim();
+    normalize_batch_descriptions(descriptions, response, expected_count)
+}
+
+fn parse_batch_response_with_headers(response: &str, expected_count: usize) -> Option<Vec<String>> {
+    let parts: Vec<&str> = response.split("## Image").collect();
+    if parts.len() <= 1 {
+        return None;
+    }
+
+    let mut descriptions = Vec::with_capacity(expected_count);
+    for part in parts.iter().skip(1) {
+        let content = part
+            .trim()
+            .splitn(2, '\n')
+            .nth(1)
+            .unwrap_or(part.trim())
+            .trim();
+        if !content.is_empty() {
             descriptions.push(content.to_string());
         }
     }
 
-    // If we didn't find enough descriptions, try splitting by "---"
-    if descriptions.len() < expected_count {
-        descriptions.clear();
-        let parts: Vec<&str> = response.split("---").collect();
-        for part in &parts {
-            let trimmed = part.trim();
-            if !trimmed.is_empty() && !trimmed.starts_with("Image") {
-                descriptions.push(trimmed.to_string());
-            }
+    if descriptions.is_empty() {
+        None
+    } else {
+        Some(descriptions)
+    }
+}
+
+fn parse_batch_response_with_separators(
+    response: &str,
+    expected_count: usize,
+) -> Option<Vec<String>> {
+    let mut descriptions = Vec::with_capacity(expected_count);
+    for part in response.split("---") {
+        let trimmed = part.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with("Image") {
+            descriptions.push(trimmed.to_string());
         }
     }
 
-    // If still not enough, just return the whole response for each
+    if descriptions.is_empty() {
+        None
+    } else {
+        Some(descriptions)
+    }
+}
+
+fn normalize_batch_descriptions(
+    mut descriptions: Vec<String>,
+    response: &str,
+    expected_count: usize,
+) -> Vec<String> {
     if descriptions.len() < expected_count {
-        descriptions = vec![response.to_string(); expected_count];
-    } else if descriptions.len() > expected_count {
+        return vec![response.to_string(); expected_count];
+    }
+
+    if descriptions.len() > expected_count {
         descriptions.truncate(expected_count);
     }
 

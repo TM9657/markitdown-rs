@@ -11,6 +11,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -34,11 +35,7 @@ async fn test_text_fake_text() {
         .convert(&test_file("fake_text.txt"), Some(default_options(".txt")))
         .await;
 
-    assert!(
-        result.is_ok(),
-        "Text conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Text conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
     assert!(!content.is_empty(), "Content should not be empty");
@@ -51,11 +48,7 @@ async fn test_text_contract() {
         .convert(&test_file("contract.txt"), Some(default_options(".txt")))
         .await;
 
-    assert!(
-        result.is_ok(),
-        "Text conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Text conversion failed: {:?}", result.err());
 }
 
 #[tokio::test]
@@ -68,11 +61,7 @@ async fn test_text_book_war_and_peace() {
         )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "Text conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Text conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
     assert!(!content.is_empty(), "Content should not be empty");

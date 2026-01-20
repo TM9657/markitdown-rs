@@ -9,6 +9,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -85,7 +86,10 @@ async fn test_jupyter_bytes_conversion() {
 async fn test_jupyter_mime_out() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("mime.out.ipynb"), Some(default_options(".ipynb")))
+        .convert(
+            &test_file("mime.out.ipynb"),
+            Some(default_options(".ipynb")),
+        )
         .await;
 
     assert!(

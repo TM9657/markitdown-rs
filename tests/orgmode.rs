@@ -9,6 +9,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -25,7 +26,10 @@ fn test_file(name: &str) -> String {
 async fn test_org_comprehensive() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("comprehensive.org"), Some(default_options(".org")))
+        .convert(
+            &test_file("comprehensive.org"),
+            Some(default_options(".org")),
+        )
         .await;
 
     assert!(
@@ -89,7 +93,10 @@ async fn test_org_bytes_conversion() {
 async fn test_org_pandoc_writer() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("pandoc-writer.org"), Some(default_options(".org")))
+        .convert(
+            &test_file("pandoc-writer.org"),
+            Some(default_options(".org")),
+        )
         .await;
 
     assert!(
@@ -103,7 +110,10 @@ async fn test_org_pandoc_writer() {
 async fn test_org_pandoc_tables() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("pandoc-tables.org"), Some(default_options(".org")))
+        .convert(
+            &test_file("pandoc-tables.org"),
+            Some(default_options(".org")),
+        )
         .await;
 
     assert!(

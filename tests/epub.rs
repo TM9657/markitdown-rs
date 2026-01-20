@@ -11,6 +11,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -32,11 +33,7 @@ async fn test_epub2_cover() {
     let md = MarkItDown::new();
     let result = md.convert(&test_file("epub2_cover.epub"), None).await;
 
-    assert!(
-        result.is_ok(),
-        "EPUB conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "EPUB conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
     assert!(!content.is_empty(), "Content should not be empty");
@@ -47,11 +44,7 @@ async fn test_epub2_no_cover() {
     let md = MarkItDown::new();
     let result = md.convert(&test_file("epub2_no_cover.epub"), None).await;
 
-    assert!(
-        result.is_ok(),
-        "EPUB conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "EPUB conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
     assert!(!content.is_empty(), "Content should not be empty");
@@ -62,11 +55,7 @@ async fn test_epub2_picture() {
     let md = MarkItDown::new();
     let result = md.convert(&test_file("epub2_picture.epub"), None).await;
 
-    assert!(
-        result.is_ok(),
-        "EPUB conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "EPUB conversion failed: {:?}", result.err());
 }
 
 #[tokio::test]

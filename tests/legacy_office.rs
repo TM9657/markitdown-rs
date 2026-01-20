@@ -180,14 +180,18 @@ async fn test_potx_conversion() {
 async fn test_ppt_image_extraction_enabled() {
     let md = MarkItDown::new();
     let bytes = fs::read(test_file("legacy_office/simple.ppt")).expect("Failed to read simple.ppt");
-    
+
     // Test with default options (images should be extracted)
     let options = ConversionOptions::default()
         .with_extension(".ppt")
         .with_images(true);
     let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
-    assert!(result.is_ok(), "PPT conversion with image extraction failed: {:?}", result.err());
-    
+    assert!(
+        result.is_ok(),
+        "PPT conversion with image extraction failed: {:?}",
+        result.err()
+    );
+
     // The simple.ppt file has no images, so this verifies the code path works without errors
     let doc = result.unwrap();
     let images = doc.images();
@@ -200,15 +204,20 @@ async fn test_ppt_image_extraction_enabled() {
 #[tokio::test]
 async fn test_doc_image_extraction_enabled() {
     let md = MarkItDown::new();
-    let bytes = fs::read(test_file("legacy_office/unit_test_lists.doc")).expect("Failed to read DOC");
-    
+    let bytes =
+        fs::read(test_file("legacy_office/unit_test_lists.doc")).expect("Failed to read DOC");
+
     // Test with default options (images should be extracted)
     let options = ConversionOptions::default()
         .with_extension(".doc")
         .with_images(true);
     let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
-    assert!(result.is_ok(), "DOC conversion with image extraction failed: {:?}", result.err());
-    
+    assert!(
+        result.is_ok(),
+        "DOC conversion with image extraction failed: {:?}",
+        result.err()
+    );
+
     // The unit_test_lists.doc file has no images
     let doc = result.unwrap();
     let images = doc.images();
@@ -222,15 +231,23 @@ async fn test_doc_image_extraction_enabled() {
 async fn test_legacy_image_extraction_disabled() {
     let md = MarkItDown::new();
     let bytes = fs::read(test_file("legacy_office/simple.ppt")).expect("Failed to read simple.ppt");
-    
+
     // Disable image extraction
     let options = ConversionOptions::default()
         .with_extension(".ppt")
         .with_images(false);
     let result = md.convert_bytes(Bytes::from(bytes), Some(options)).await;
-    assert!(result.is_ok(), "PPT conversion without images failed: {:?}", result.err());
-    
+    assert!(
+        result.is_ok(),
+        "PPT conversion without images failed: {:?}",
+        result.err()
+    );
+
     let doc = result.unwrap();
     let images = doc.images();
-    assert_eq!(images.len(), 0, "No images should be extracted when disabled");
+    assert_eq!(
+        images.len(),
+        0,
+        "No images should be extracted when disabled"
+    );
 }

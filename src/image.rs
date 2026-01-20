@@ -89,11 +89,20 @@ impl ImageConverter {
         let mut image = ExtractedImage::new("image_1", bytes.clone(), mime_type.clone());
         image.page_number = Some(1);
 
+        if let Some(ref opts) = args {
+            if let Some(path) = &opts.image_context_path {
+                image.source_path = Some(path.clone());
+            }
+        }
+
         // If LLM client is provided, get description
         if let Some(ref opts) = args {
             if let Some(ref llm_client) = opts.llm_client {
-                if let Ok(description) = llm_client.describe_image(&bytes, &mime_type).await {
-                    image.description = Some(description);
+                if let Ok(mut descriptions) = llm_client.describe_extracted_images(&[&image]).await
+                {
+                    if let Some(description) = descriptions.pop() {
+                        image.description = Some(description);
+                    }
                 }
             }
         }

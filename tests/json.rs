@@ -11,6 +11,7 @@ fn default_options(ext: &str) -> ConversionOptions {
         file_extension: Some(ext.to_string()),
         url: None,
         llm_client: None,
+        image_context_path: None,
         extract_images: true,
         force_llm_ocr: false,
         merge_multipage_tables: false,
@@ -37,59 +38,58 @@ async fn test_json_simple() {
         )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "JSON conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "JSON conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
-    assert!(content.contains("```json"), "Should contain JSON code block");
+    assert!(
+        content.contains("```json"),
+        "Should contain JSON code block"
+    );
 }
 
 #[tokio::test]
 async fn test_json_complex_nested() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("complex_nested.json"), Some(default_options(".json")))
+        .convert(
+            &test_file("complex_nested.json"),
+            Some(default_options(".json")),
+        )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "JSON conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "JSON conversion failed: {:?}", result.err());
     let doc = result.unwrap();
     let content = doc.to_markdown();
-    assert!(content.contains("```json"), "Should contain JSON code block");
+    assert!(
+        content.contains("```json"),
+        "Should contain JSON code block"
+    );
 }
 
 #[tokio::test]
 async fn test_json_sample_document() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("sample_document.json"), Some(default_options(".json")))
+        .convert(
+            &test_file("sample_document.json"),
+            Some(default_options(".json")),
+        )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "JSON conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "JSON conversion failed: {:?}", result.err());
 }
 
 #[tokio::test]
 async fn test_json_schema_test() {
     let md = MarkItDown::new();
     let result = md
-        .convert(&test_file("schema_test.json"), Some(default_options(".json")))
+        .convert(
+            &test_file("schema_test.json"),
+            Some(default_options(".json")),
+        )
         .await;
 
-    assert!(
-        result.is_ok(),
-        "JSON conversion failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "JSON conversion failed: {:?}", result.err());
 }
 
 #[tokio::test]
