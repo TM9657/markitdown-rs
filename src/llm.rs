@@ -558,7 +558,7 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
             // Process one at a time in parallel
             let futures: Vec<_> = images
                 .iter()
-                .map(|(data, mime)| self.describe_image(*data, *mime))
+                .map(|(data, mime)| self.describe_image(data, mime))
                 .collect();
 
             let results = join_all(futures).await;
@@ -678,8 +678,8 @@ fn parse_batch_response_with_headers(response: &str, expected_count: usize) -> O
     for part in parts.iter().skip(1) {
         let content = part
             .trim()
-            .splitn(2, '\n')
-            .nth(1)
+            .split_once('\n')
+            .map(|x| x.1)
             .unwrap_or(part.trim())
             .trim();
         if !content.is_empty() {

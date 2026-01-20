@@ -49,7 +49,6 @@ use excel::ExcelConverter;
 use fictionbook::FictionBookConverter;
 use html::HtmlConverter;
 use image::ImageConverter;
-use infer;
 use iwork::{KeynoteConverter, NumbersConverter, PagesConverter};
 use jupyter::JupyterConverter;
 use latex::LatexConverter;

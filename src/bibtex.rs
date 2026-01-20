@@ -110,7 +110,7 @@ impl BibtexConverter {
                 let fields_start = chars.peek().map(|(i, _)| *i).unwrap_or(content.len());
                 let mut fields_end = fields_start;
 
-                while let Some((idx, c)) = chars.next() {
+                for (idx, c) in chars.by_ref() {
                     if c == '{' {
                         brace_count += 1;
                     } else if c == '}' {
@@ -235,8 +235,7 @@ impl BibtexConverter {
 
     fn clean_latex(s: &str) -> String {
         // Remove common LaTeX commands and braces
-        s.replace('{', "")
-            .replace('}', "")
+        s.replace(['{', '}'], "")
             .replace("\\&", "&")
             .replace("\\%", "%")
             .replace("\\textit", "")

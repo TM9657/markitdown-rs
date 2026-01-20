@@ -135,7 +135,7 @@ impl PagesConverter {
         let mut buffer = String::new();
 
         for &byte in data {
-            if byte >= 0x20 && byte < 0x7F {
+            if (0x20..0x7F).contains(&byte) {
                 buffer.push(byte as char);
                 consecutive_printable += 1;
             } else if byte == b'\n' || byte == b'\r' || byte == b'\t' {

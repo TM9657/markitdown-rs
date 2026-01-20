@@ -44,7 +44,10 @@ async fn test_zip_conversion() {
     let markitdown = MarkItDown::new();
 
     let result = markitdown
-        .convert(zip_path.to_str().expect("Invalid temp zip path"), Some(options))
+        .convert(
+            zip_path.to_str().expect("Invalid temp zip path"),
+            Some(options),
+        )
         .await;
     let _ = fs::remove_file(&zip_path);
     assert!(result.is_ok());
@@ -66,10 +69,7 @@ async fn test_zip_bytes_conversion() {
     let markitdown = MarkItDown::new();
 
     let result = markitdown
-        .convert_bytes(
-            Bytes::from(zip_bytes),
-            Some(options),
-        )
+        .convert_bytes(Bytes::from(zip_bytes), Some(options))
         .await;
     assert!(result.is_ok());
 }

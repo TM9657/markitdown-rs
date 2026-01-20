@@ -47,7 +47,7 @@ impl DocxConverter {
                 BodyContent::Paragraph(paragraph) => {
                     let mut text = String::new();
                     for t in paragraph.iter_text() {
-                        text.push_str(&t.to_string());
+                        text.push_str(t.as_ref());
                     }
                     if !text.trim().is_empty() {
                         page.add_content(ContentBlock::Text(text));
@@ -65,7 +65,7 @@ impl DocxConverter {
                                 for content in &tc.content {
                                     let TableCellContent::Paragraph(paragraph) = content;
                                     for text in paragraph.iter_text() {
-                                        cell_text.push_str(&text.to_string());
+                                        cell_text.push_str(text.as_ref());
                                     }
                                 }
                                 headers.push(cell_text);
@@ -81,7 +81,7 @@ impl DocxConverter {
                                     for content in &tc.content {
                                         let TableCellContent::Paragraph(paragraph) = content;
                                         for text in paragraph.iter_text() {
-                                            cell_text.push_str(&text.to_string());
+                                            cell_text.push_str(text.as_ref());
                                         }
                                     }
                                     row_data.push(cell_text);

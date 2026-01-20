@@ -136,8 +136,6 @@ impl TypstConverter {
     }
 
     fn convert_formatting(line: &str) -> String {
-        let result = line.to_string();
-
         // *bold* in Typst is actually bold (not italic)
         // _italic_ in Typst
         // But Typst uses _underline_ for underline
@@ -145,7 +143,7 @@ impl TypstConverter {
         // For simplicity, keep * as bold marker (same as markdown)
         // The regex approach would be complex for nested cases
 
-        result
+        line.to_string()
     }
 }
 

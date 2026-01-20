@@ -108,7 +108,7 @@ impl PageMetrics {
             .filter(|w| {
                 let len = w.len();
                 let alpha = w.chars().filter(|c| c.is_alphabetic()).count();
-                len >= 2 && len <= 20 && (alpha as f64 / len as f64) > 0.5
+                (2..=20).contains(&len) && (alpha as f64 / len as f64) > 0.5
             })
             .count();
         let valid_word_ratio = if word_count > 0 {
@@ -218,7 +218,7 @@ impl PdfConverter {
         let interpreter_settings = InterpreterSettings::default();
         let render_settings = RenderSettings::default();
 
-        let pixmap = render(&page, &interpreter_settings, &render_settings);
+        let pixmap = render(page, &interpreter_settings, &render_settings);
 
         // Encode as PNG (take_png consumes the pixmap)
         let png_data = pixmap.take_png();

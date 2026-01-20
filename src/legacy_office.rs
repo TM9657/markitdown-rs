@@ -95,10 +95,11 @@ impl ImageFormat {
         }
 
         // EMF: 01 00 00 00 ... 20 45 4D 46 at offset 40
-        if data.len() >= 44 && data[0..4] == [0x01, 0x00, 0x00, 0x00] {
-            if data[40..44] == [0x20, 0x45, 0x4D, 0x46] {
-                return ImageFormat::Emf;
-            }
+        if data.len() >= 44
+            && data[0..4] == [0x01, 0x00, 0x00, 0x00]
+            && data[40..44] == [0x20, 0x45, 0x4D, 0x46]
+        {
+            return ImageFormat::Emf;
         }
 
         // DIB/BMP: BM
@@ -1142,7 +1143,7 @@ impl PptConverter {
             .iter()
             .take_while(|&&b| b != 0)
             .map(|&b| {
-                if b >= 0x20 && b < 0x7F {
+                if (0x20..0x7F).contains(&b) {
                     b as char
                 } else if b == 0x0D || b == 0x0A {
                     '\n'
