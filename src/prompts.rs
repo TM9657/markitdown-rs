@@ -22,7 +22,11 @@ Your task is to describe the image in detail, capturing:
 5. **Context**: Any contextual information that helps understand the image
 
 Be thorough but concise. Focus on extracting actionable information.
-Output plain text or markdown as appropriate for the content."#;
+Output plain text or markdown as appropriate for the content.
+
+If a source path hint is provided, use it to infer context when the image alone is ambiguous.
+Example: If the image shows an unclear close-up but the source path hint is
+"welding_results/companya/img_1.png", note that it likely relates to welding results for Company A."#;
 
 /// Default system prompt for page/document conversion.
 ///
