@@ -396,6 +396,7 @@ fn extract_text_from_response(content: &OneOrMany<AssistantContent>) -> String {
             AssistantContent::Text(text) => Some(text.text.clone()),
             AssistantContent::Reasoning(r) => Some(r.reasoning.join("\n")),
             AssistantContent::ToolCall(_) => None,
+            AssistantContent::Image(_) => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
