@@ -451,46 +451,68 @@ fn detect_and_truncate_repetition(text: &str) -> String {
         return text.to_string();
     }
 
-    // Helper to find nearest char boundary at or before position
-    fn find_char_boundary(s: &str, pos: usize) -> usize {
-        if pos >= s.len() {
-            return s.len();
+    // Helper to safely get a substring by character indices (not byte indices)
+    // Returns None if the range is invalid
+    fn safe_char_slice(s: &str, char_start: usize, char_end: usize) -> Option<&str> {
+        if char_start >= char_end {
+            return None;
         }
-        let mut idx = pos;
-        while idx > 0 && !s.is_char_boundary(idx) {
-            idx -= 1;
+        let mut char_indices = s.char_indices();
+        let start_byte = char_indices.nth(char_start).map(|(i, _)| i)?;
+        // We need to advance (char_end - char_start - 1) more positions, then get the end
+        let end_byte = if char_end - char_start == 1 {
+            // If only one character, end is after this char
+            char_indices.next().map(|(i, _)| i).unwrap_or(s.len())
+        } else {
+            char_indices
+                .nth(char_end - char_start - 2)
+                .map(|(_, _)| ())
+                .and_then(|_| char_indices.next().map(|(i, _)| i))
+                .unwrap_or(s.len())
+        };
+        Some(&s[start_byte..end_byte])
+    }
+
+    // Helper to safely truncate a string to a maximum number of characters
+    fn safe_truncate_chars(s: &str, max_chars: usize) -> &str {
+        match s.char_indices().nth(max_chars) {
+            Some((byte_pos, _)) => &s[..byte_pos],
+            None => s,
         }
-        idx
     }
 
     // Strategy 1: Check for repeating substrings using sliding window
     // Look for any 30+ char pattern that repeats 3+ times
-    let check_sizes = [30, 50, 80, 100];
-    for &window_size in &check_sizes {
-        if text.len() > window_size * 4 {
-            // Sample multiple positions throughout the text
-            let sample_count = 10.min(text.len() / window_size);
-            for i in 0..sample_count {
-                let raw_start = (text.len() / sample_count) * i;
-                let start = find_char_boundary(text, raw_start);
-                let raw_end = start + window_size;
-                let end = find_char_boundary(text, raw_end);
+    let char_count = text.chars().count();
+    let check_sizes = [30usize, 50, 80, 100];
 
-                if end <= text.len() && start < end {
-                    let sample = &text[start..end];
+    for &window_size in &check_sizes {
+        if char_count > window_size * 4 {
+            // Sample multiple positions throughout the text
+            let sample_count = 10.min(char_count / window_size);
+            for i in 0..sample_count {
+                let char_start = (char_count / sample_count) * i;
+                let char_end = char_start + window_size;
+
+                if let Some(sample) = safe_char_slice(text, char_start, char_end) {
                     // Skip if sample is mostly whitespace
-                    if sample.chars().filter(|c| !c.is_whitespace()).count() < sample.len() / 3 {
+                    let non_ws_count = sample.chars().filter(|c| !c.is_whitespace()).count();
+                    if non_ws_count < window_size / 3 {
                         continue;
                     }
+
                     let count = text.matches(sample).count();
                     if count >= 3 {
-                        // Found repetition - truncate at first occurrence + buffer
-                        if let Some(first_pos) = text.find(sample) {
-                            let raw_end_pos = first_pos + sample.len() * 2;
-                            let end_pos = find_char_boundary(text, raw_end_pos.min(text.len()));
+                        // Found repetition - truncate at first occurrence + some buffer
+                        if let Some(first_byte_pos) = text.find(sample) {
+                            // Find character position of first occurrence
+                            let first_char_pos = text[..first_byte_pos].chars().count();
+                            // Truncate at first occurrence + 2x window size (in chars)
+                            let truncate_at = first_char_pos + window_size * 2;
+                            let truncated = safe_truncate_chars(text, truncate_at);
                             return format!(
                                 "{}\n\n[Note: Repetitive content detected and truncated]",
-                                &text[..end_pos]
+                                truncated
                             );
                         }
                     }
@@ -505,13 +527,14 @@ fn detect_and_truncate_repetition(text: &str) -> String {
     let mut last_line = "";
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.len() < 10 {
+        // Use char count instead of byte length for comparison
+        if trimmed.is_empty() || trimmed.chars().count() < 10 {
             continue;
         }
         if trimmed == last_line {
             seen_consecutive += 1;
             if seen_consecutive >= 4 {
-                let truncate_at = i - seen_consecutive;
+                let truncate_at = i.saturating_sub(seen_consecutive);
                 let truncated: Vec<&str> = lines[..truncate_at].to_vec();
                 return format!(
                     "{}\n\n[Note: Repetitive content detected and truncated]",
@@ -1145,5 +1168,36 @@ mod tests {
             }
             _ => panic!("Expected Unsupported for unknown format"),
         }
+    }
+
+    #[test]
+    fn test_detect_and_truncate_repetition_with_multibyte_chars() {
+        // Test with German text containing umlauts (multi-byte UTF-8 characters)
+        let text_with_umlauts = "Prüfung bei RT im Neuzustand. ".repeat(20);
+        // Should not panic even with multi-byte characters
+        let result = detect_and_truncate_repetition(&text_with_umlauts);
+        assert!(result.contains("Prüfung"));
+
+        // Test with mixed content including special characters
+        let mixed_text = "Hochspannung: 2,1kVAC/48S62Hz gefordert. Größe: 100mm. ".repeat(15);
+        let result2 = detect_and_truncate_repetition(&mixed_text);
+        assert!(result2.contains("Hochspannung"));
+
+        // Test with Japanese characters (3-byte UTF-8)
+        let japanese_text = "これはテストです。".repeat(50);
+        let result3 = detect_and_truncate_repetition(&japanese_text);
+        assert!(result3.contains("これは"));
+
+        // Test with emoji (4-byte UTF-8)
+        let emoji_text = "Hello 👋 World! ".repeat(40);
+        let result4 = detect_and_truncate_repetition(&emoji_text);
+        assert!(result4.contains("👋"));
+    }
+
+    #[test]
+    fn test_detect_and_truncate_repetition_short_text() {
+        // Short text should be returned as-is
+        let short = "Hello world";
+        assert_eq!(detect_and_truncate_repetition(short), short);
     }
 }

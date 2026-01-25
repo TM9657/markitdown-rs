@@ -66,20 +66,21 @@ pub fn detect_table_fragments(content: &str) -> Vec<TableFragment> {
                 table_end_line += 1;
             }
 
-            // Calculate byte positions
-            // Each line in lines[] has had its \n stripped, so we need to add 1 for each
+            // Calculate byte positions for string slicing
+            // Each line in lines[] has had its \n stripped, so we need to add 1 byte for each newline
             // EXCEPT for the last line if the content doesn't end with \n
+            // Using len() is correct here since we need byte positions for str slicing
             let content_ends_with_newline = content.ends_with('\n');
 
             let start_pos: usize = lines[..table_start_line]
                 .iter()
                 .enumerate()
                 .map(|(idx, l)| {
-                    // Add 1 for newline unless it's the last line of content without trailing newline
+                    // Add 1 byte for newline unless it's the last line of content without trailing newline
                     if idx == lines.len() - 1 && !content_ends_with_newline {
                         l.len()
                     } else {
-                        l.len() + 1
+                        l.len() + 1 // +1 for '\n' which is always 1 byte
                     }
                 })
                 .sum();
@@ -88,14 +89,28 @@ pub fn detect_table_fragments(content: &str) -> Vec<TableFragment> {
                 .iter()
                 .enumerate()
                 .map(|(idx, l)| {
-                    // Add 1 for newline unless it's the last line of content without trailing newline
+                    // Add 1 byte for newline unless it's the last line of content without trailing newline
                     if idx == lines.len() - 1 && !content_ends_with_newline {
                         l.len()
                     } else {
-                        l.len() + 1
+                        l.len() + 1 // +1 for '\n' which is always 1 byte
                     }
                 })
                 .sum();
+
+            // Verify that calculated positions are valid UTF-8 boundaries
+            // This should always be true since we're summing line lengths + newlines,
+            // which aligns with line boundaries in the original string
+            debug_assert!(
+                content.is_char_boundary(start_pos),
+                "start_pos {} is not a char boundary",
+                start_pos
+            );
+            debug_assert!(
+                content.is_char_boundary(end_pos.min(content.len())),
+                "end_pos {} is not a char boundary",
+                end_pos
+            );
 
             // Parse the table structure
             let table_lines = &lines[table_start_line..table_end_line];

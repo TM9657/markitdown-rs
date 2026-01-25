@@ -136,8 +136,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(first_page) = document.pages.first() {
                 println!("\n--- First Page Preview ---");
                 let markdown = first_page.to_markdown();
-                if markdown.len() > 3000 {
-                    println!("{}...\n[truncated]", &markdown[..3000]);
+                if markdown.chars().count() > 3000 {
+                    let truncated: String = markdown.chars().take(3000).collect();
+                    println!("{}...\n[truncated]", truncated);
                 } else {
                     println!("{}", markdown);
                 }

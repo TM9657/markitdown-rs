@@ -9,6 +9,14 @@ const TEST_IMAGE_PATH: &str = "tests/test_documents/images/2305_03393v1_pg9_img.
 /// Test PDF with images
 const TEST_PDF_PATH: &str = "tests/test_documents/pdf/with_images.pdf";
 
+/// Safely truncate a string to a maximum number of characters (not bytes)
+fn safe_truncate(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((byte_pos, _)) => &s[..byte_pos],
+        None => s,
+    }
+}
+
 /// Load test image from file
 fn load_test_image() -> Vec<u8> {
     std::fs::read(TEST_IMAGE_PATH).expect("Failed to load test image")
@@ -81,7 +89,7 @@ async fn test_openrouter_image_description() {
             println!(
                 "✓ OpenRouter Image Description ({} chars):\n{}",
                 description.len(),
-                &description[..description.len().min(500)]
+                safe_truncate(&description, 500)
             );
             assert!(!description.is_empty(), "Description should not be empty");
         }
@@ -238,7 +246,7 @@ async fn test_azure_openai_image_description() {
             println!(
                 "✓ Azure OpenAI Image Description ({} chars):\n{}",
                 description.len(),
-                &description[..description.len().min(500)]
+                safe_truncate(&description, 500)
             );
             assert!(!description.is_empty(), "Description should not be empty");
         }
@@ -308,7 +316,7 @@ async fn test_azure_openai_pdf_conversion() {
             println!(
                 "✓ Azure OpenAI PDF Conversion ({} chars):\n{}",
                 markdown.len(),
-                &markdown[..markdown.len().min(1000)]
+                safe_truncate(&markdown, 1000)
             );
             assert!(!markdown.is_empty(), "Markdown should not be empty");
         }
@@ -394,7 +402,7 @@ async fn test_gemini_image_description() {
             println!(
                 "✓ Gemini Image Description ({} chars):\n{}",
                 description.len(),
-                &description[..description.len().min(500)]
+                safe_truncate(&description, 500)
             );
             assert!(!description.is_empty(), "Description should not be empty");
         }
@@ -455,7 +463,7 @@ async fn test_gemini_pdf_conversion() {
             println!(
                 "✓ Gemini PDF Conversion ({} chars):\n{}",
                 markdown.len(),
-                &markdown[..markdown.len().min(1000)]
+                safe_truncate(&markdown, 1000)
             );
             assert!(!markdown.is_empty(), "Markdown should not be empty");
         }
@@ -541,7 +549,7 @@ async fn test_openai_image_description() {
             println!(
                 "✓ OpenAI Image Description ({} chars):\n{}",
                 description.len(),
-                &description[..description.len().min(500)]
+                safe_truncate(&description, 500)
             );
             assert!(!description.is_empty(), "Description should not be empty");
         }
@@ -602,7 +610,7 @@ async fn test_openai_pdf_conversion() {
             println!(
                 "✓ OpenAI PDF Conversion ({} chars):\n{}",
                 markdown.len(),
-                &markdown[..markdown.len().min(1000)]
+                safe_truncate(&markdown, 1000)
             );
             assert!(!markdown.is_empty(), "Markdown should not be empty");
         }
@@ -689,7 +697,7 @@ async fn test_legacy_ppt_conversion() {
                 markdown.len(),
                 images.len()
             );
-            println!("{}", &markdown[..markdown.len().min(2000)]);
+            println!("{}", safe_truncate(&markdown, 2000));
             if !images.is_empty() {
                 println!("\n--- Extracted Images ---");
                 for img in &images {
@@ -752,7 +760,7 @@ async fn test_legacy_doc_conversion() {
                 markdown.len(),
                 images.len()
             );
-            println!("{}", &markdown[..markdown.len().min(2000)]);
+            println!("{}", safe_truncate(&markdown, 2000));
             if !images.is_empty() {
                 println!("\n--- Extracted Images ---");
                 for img in &images {
@@ -851,7 +859,7 @@ async fn test_azure_pptx_with_images() {
         Ok(doc) => {
             let markdown = doc.to_markdown();
             println!("✓ Azure PPTX Conversion ({} chars):", markdown.len());
-            println!("{}", &markdown[..markdown.len().min(3000)]);
+            println!("{}", safe_truncate(&markdown, 3000));
 
             // Check for image placeholders or descriptions
             let has_images = markdown.contains("[Image")
@@ -926,7 +934,7 @@ async fn test_azure_pitch_deck_pptx() {
                 "✓ Azure Pitch Deck PPTX Conversion ({} chars):",
                 markdown.len()
             );
-            println!("{}", &markdown[..markdown.len().min(3000)]);
+            println!("{}", safe_truncate(&markdown, 3000));
 
             // Check for image placeholders or descriptions
             let has_images = markdown.contains("[Image")
@@ -1038,7 +1046,7 @@ async fn test_pitch_deck_pptx_extraction_without_llm() {
                 "=== Pitch Deck PPTX Baseline Extraction ({} chars) ===",
                 markdown.len()
             );
-            println!("{}", &markdown[..markdown.len().min(5000)]);
+            println!("{}", safe_truncate(&markdown, 5000));
             println!("=== End of Pitch Deck Output ===\n");
 
             // Check extraction quality

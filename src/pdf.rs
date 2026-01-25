@@ -32,34 +32,52 @@ const MIN_AVG_WORD_LENGTH: f64 = 2.5;
 /// Maximum ratio of special characters for text to be considered valid
 const MAX_SPECIAL_CHAR_RATIO: f64 = 0.3;
 
-/// Find a good break point in text near the target position
+/// Find a good break point in text near the target position (in characters, not bytes)
 /// Prefers breaking at paragraph boundaries, then sentences, then words
-fn find_text_break_point(text: &str, target: usize) -> usize {
-    if target >= text.len() {
-        return text.len();
+fn find_text_break_point(text: &str, target_chars: usize) -> usize {
+    let char_count = text.chars().count();
+    if target_chars >= char_count {
+        return char_count;
+    }
+
+    // Helper to convert char index to byte index
+    fn char_to_byte_index(s: &str, char_idx: usize) -> usize {
+        s.char_indices()
+            .nth(char_idx)
+            .map(|(byte_idx, _)| byte_idx)
+            .unwrap_or(s.len())
+    }
+
+    // Helper to convert byte index to char index
+    fn byte_to_char_index(s: &str, byte_idx: usize) -> usize {
+        s[..byte_idx.min(s.len())].chars().count()
     }
 
     // Look for paragraph break (double newline) within 20% of target
-    let search_start = (target as f64 * 0.8) as usize;
-    let search_end = (target as f64 * 1.2).min(text.len() as f64) as usize;
+    let search_start_chars = (target_chars as f64 * 0.8) as usize;
+    let search_end_chars = (target_chars as f64 * 1.2).min(char_count as f64) as usize;
 
-    if let Some(pos) = text[search_start..search_end].find("\n\n") {
-        return search_start + pos + 2;
+    let search_start_bytes = char_to_byte_index(text, search_start_chars);
+    let search_end_bytes = char_to_byte_index(text, search_end_chars);
+
+    if let Some(pos) = text[search_start_bytes..search_end_bytes].find("\n\n") {
+        return byte_to_char_index(text, search_start_bytes + pos + 2);
     }
 
     // Look for sentence end
     for end_char in [". ", ".\n", "! ", "!\n", "? ", "?\n"] {
-        if let Some(pos) = text[search_start..search_end].find(end_char) {
-            return search_start + pos + end_char.len();
+        if let Some(pos) = text[search_start_bytes..search_end_bytes].find(end_char) {
+            return byte_to_char_index(text, search_start_bytes + pos + end_char.len());
         }
     }
 
     // Look for word boundary
-    if let Some(pos) = text[target..search_end.min(text.len())].find(' ') {
-        return target + pos + 1;
+    let target_bytes = char_to_byte_index(text, target_chars);
+    if let Some(pos) = text[target_bytes..search_end_bytes].find(' ') {
+        return byte_to_char_index(text, target_bytes + pos + 1);
     }
 
-    target
+    target_chars
 }
 
 /// Metrics for a PDF page to determine if LLM processing is needed
@@ -272,7 +290,18 @@ impl PdfConverter {
             return result;
         }
 
-        let chars_per_page = (total_text.len() / actual_page_count).max(1);
+        let total_char_count = total_text.chars().count();
+        let chars_per_page = (total_char_count / actual_page_count).max(1);
+
+        // Helper to split a string at a character index
+        fn split_at_char(s: &str, char_idx: usize) -> (&str, &str) {
+            let byte_idx = s
+                .char_indices()
+                .nth(char_idx)
+                .map(|(i, _)| i)
+                .unwrap_or(s.len());
+            s.split_at(byte_idx)
+        }
 
         let mut result = Vec::with_capacity(actual_page_count);
         let mut remaining = total_text.as_str();
@@ -282,10 +311,11 @@ impl PdfConverter {
                 // Last page gets all remaining text
                 result.push(remaining.to_string());
             } else {
-                // Find a good break point near the target length
-                let target_end = chars_per_page.min(remaining.len());
+                // Find a good break point near the target length (in characters)
+                let remaining_chars = remaining.chars().count();
+                let target_end = chars_per_page.min(remaining_chars);
                 let break_point = find_text_break_point(remaining, target_end);
-                let (page_text, rest) = remaining.split_at(break_point);
+                let (page_text, rest) = split_at_char(remaining, break_point);
                 result.push(page_text.trim().to_string());
                 remaining = rest.trim_start();
             }
