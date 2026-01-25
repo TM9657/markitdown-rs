@@ -21,11 +21,13 @@
 use async_trait::async_trait;
 use base64::prelude::*;
 use futures::future::join_all;
+use image::ImageFormat;
 use rig::{
     completion::{AssistantContent, CompletionModel, CompletionRequest, CompletionRequestBuilder},
     message::{ImageDetail, ImageMediaType, Message, UserContent},
     OneOrMany,
 };
+use std::io::Cursor;
 use std::sync::Arc;
 
 use crate::error::MarkitdownError;
@@ -272,8 +274,16 @@ impl<M: CompletionModel> LlmWrapper<M> {
     where
         M: Send + Sync + 'static,
     {
-        let base64_data = img.to_base64();
-        let image_type = parse_mime_to_image_type(&img.mime_type);
+        // Prepare the image, converting if necessary
+        let (base64_data, image_type) = match prepare_image_for_llm(&img.data, &img.mime_type) {
+            PreparedImage::Ready(media_type) => (img.to_base64(), media_type),
+            PreparedImage::Converted(png_data) => {
+                (BASE64_STANDARD.encode(&png_data), ImageMediaType::PNG)
+            }
+            PreparedImage::Unsupported(reason) => {
+                return Ok(format!("[Image skipped: {}]", reason));
+            }
+        };
 
         let mut content = OneOrMany::one(UserContent::image_base64(
             base64_data,
@@ -348,12 +358,25 @@ impl<M: CompletionModel> LlmWrapper<M> {
             }
 
             let mut content = OneOrMany::one(UserContent::text(&self.config.batch_image_prompt));
+            let mut processed_count = 0;
+            let mut skipped_descriptions = Vec::new();
 
             for (i, img) in chunk.iter().enumerate() {
-                let base64_data = img.to_base64();
-                let image_type = parse_mime_to_image_type(&img.mime_type);
+                // Prepare the image, converting if necessary
+                let (base64_data, image_type) =
+                    match prepare_image_for_llm(&img.data, &img.mime_type) {
+                        PreparedImage::Ready(media_type) => (img.to_base64(), media_type),
+                        PreparedImage::Converted(png_data) => {
+                            (BASE64_STANDARD.encode(&png_data), ImageMediaType::PNG)
+                        }
+                        PreparedImage::Unsupported(reason) => {
+                            skipped_descriptions.push((i, format!("[Image skipped: {}]", reason)));
+                            continue;
+                        }
+                    };
 
-                let mut context = format!("\n--- Image {} ---", i + 1);
+                processed_count += 1;
+                let mut context = format!("\n--- Image {} ---", processed_count);
                 if let Some(alt) = &img.alt_text {
                     context.push_str(&format!("\nExisting alt text: {}", alt));
                 }
@@ -375,12 +398,27 @@ impl<M: CompletionModel> LlmWrapper<M> {
                 ));
             }
 
+            // If all images were skipped, just add the placeholders
+            if processed_count == 0 {
+                for (_, desc) in skipped_descriptions {
+                    all_descriptions.push(desc);
+                }
+                continue;
+            }
+
             let request = self
                 .build_request(&self.config.batch_image_prompt, content)
                 .build();
 
             let response = self.send_request(request).await?;
-            let descriptions = parse_batch_response(&response, chunk.len());
+            let mut descriptions = parse_batch_response(&response, processed_count);
+
+            // Insert skipped placeholders at their original positions
+            for (original_idx, placeholder) in skipped_descriptions {
+                let insert_pos = original_idx.min(descriptions.len());
+                descriptions.insert(insert_pos, placeholder);
+            }
+
             all_descriptions.extend(descriptions);
         }
 
@@ -502,15 +540,99 @@ fn detect_and_truncate_repetition(text: &str) -> String {
     text.to_string()
 }
 
-/// Parse MIME type string to rig ImageMediaType
-fn parse_mime_to_image_type(mime_type: &str) -> ImageMediaType {
+/// Parse MIME type string to rig ImageMediaType.
+/// Returns None for unsupported formats (e.g., EMF, WMF) that would cause API failures.
+fn parse_mime_to_image_type(mime_type: &str) -> Option<ImageMediaType> {
     match mime_type.to_lowercase().as_str() {
-        "image/jpeg" | "image/jpg" => ImageMediaType::JPEG,
-        "image/png" => ImageMediaType::PNG,
-        "image/gif" => ImageMediaType::GIF,
-        "image/webp" => ImageMediaType::WEBP,
-        _ => ImageMediaType::PNG, // Default to PNG for unknown types
+        "image/jpeg" | "image/jpg" => Some(ImageMediaType::JPEG),
+        "image/png" => Some(ImageMediaType::PNG),
+        "image/gif" => Some(ImageMediaType::GIF),
+        "image/webp" => Some(ImageMediaType::WEBP),
+        _ => None, // Unsupported formats like EMF/WMF return None
     }
+}
+
+/// Check if a MIME type can be converted to a supported format.
+fn is_convertible_format(mime_type: &str) -> bool {
+    matches!(
+        mime_type.to_lowercase().as_str(),
+        "image/bmp" | "image/tiff" | "image/x-tiff" | "image/x-ms-bmp"
+    )
+}
+
+/// Check if a MIME type is a legacy Windows metafile format that cannot be converted.
+fn is_legacy_metafile(mime_type: &str) -> bool {
+    matches!(
+        mime_type.to_lowercase().as_str(),
+        "image/emf"
+            | "image/wmf"
+            | "image/x-emf"
+            | "image/x-wmf"
+            | "application/x-msmetafile"
+            | "application/emf"
+            | "application/wmf"
+    )
+}
+
+/// Convert an image from a legacy format (BMP, TIFF) to PNG bytes.
+/// Returns None if conversion fails or format is not supported.
+fn convert_to_png(image_data: &[u8], mime_type: &str) -> Option<Vec<u8>> {
+    let format = match mime_type.to_lowercase().as_str() {
+        "image/bmp" | "image/x-ms-bmp" => ImageFormat::Bmp,
+        "image/tiff" | "image/x-tiff" => ImageFormat::Tiff,
+        _ => return None,
+    };
+
+    // Try to load the image
+    let img = image::load_from_memory_with_format(image_data, format).ok()?;
+
+    // Convert to PNG
+    let mut png_bytes = Vec::new();
+    let mut cursor = Cursor::new(&mut png_bytes);
+    img.write_to(&mut cursor, ImageFormat::Png).ok()?;
+
+    Some(png_bytes)
+}
+
+/// Result of attempting to prepare an image for LLM API.
+enum PreparedImage {
+    /// Image is ready to use with the given type
+    Ready(ImageMediaType),
+    /// Image was converted to PNG, new data provided
+    Converted(Vec<u8>),
+    /// Image format is unsupported and cannot be converted
+    Unsupported(String),
+}
+
+/// Prepare image data for LLM API, converting if necessary.
+fn prepare_image_for_llm(image_data: &[u8], mime_type: &str) -> PreparedImage {
+    // First, check if it's already a supported format
+    if let Some(media_type) = parse_mime_to_image_type(mime_type) {
+        return PreparedImage::Ready(media_type);
+    }
+
+    // Check if it's a legacy metafile format (EMF/WMF) - these cannot be converted
+    if is_legacy_metafile(mime_type) {
+        return PreparedImage::Unsupported(format!(
+            "Windows Metafile format ({}) cannot be converted - these are vector graphics formats with no pure Rust support",
+            mime_type
+        ));
+    }
+
+    // Try to convert convertible formats (BMP, TIFF)
+    if is_convertible_format(mime_type) {
+        if let Some(png_data) = convert_to_png(image_data, mime_type) {
+            return PreparedImage::Converted(png_data);
+        } else {
+            return PreparedImage::Unsupported(format!(
+                "Failed to convert {} image to PNG",
+                mime_type
+            ));
+        }
+    }
+
+    // Unknown format
+    PreparedImage::Unsupported(format!("Unsupported image format: {}", mime_type))
 }
 
 #[async_trait]
@@ -520,8 +642,29 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
         image_data: &[u8],
         mime_type: &str,
     ) -> Result<String, MarkitdownError> {
-        let base64_data = BASE64_STANDARD.encode(image_data);
-        self.describe_image_base64(&base64_data, mime_type).await
+        // Prepare the image, converting if necessary
+        let (base64_data, image_type) = match prepare_image_for_llm(image_data, mime_type) {
+            PreparedImage::Ready(media_type) => (BASE64_STANDARD.encode(image_data), media_type),
+            PreparedImage::Converted(png_data) => {
+                (BASE64_STANDARD.encode(&png_data), ImageMediaType::PNG)
+            }
+            PreparedImage::Unsupported(reason) => {
+                return Ok(format!("[Image skipped: {}]", reason));
+            }
+        };
+
+        let mut content = OneOrMany::one(UserContent::image_base64(
+            base64_data,
+            Some(image_type),
+            Some(ImageDetail::Auto),
+        ));
+        content.push(UserContent::text("Describe this image in detail."));
+
+        let request = self
+            .build_request(&self.config.image_description_prompt, content)
+            .build();
+
+        self.send_request(request).await
     }
 
     async fn describe_image_base64(
@@ -529,7 +672,41 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
         base64_data: &str,
         mime_type: &str,
     ) -> Result<String, MarkitdownError> {
-        let image_type = parse_mime_to_image_type(mime_type);
+        // Note: For base64 input, we cannot convert - caller must provide supported format
+        let image_type = match parse_mime_to_image_type(mime_type) {
+            Some(t) => t,
+            None => {
+                // Try to decode and convert if it's a convertible format
+                if is_convertible_format(mime_type) {
+                    if let Ok(decoded) = BASE64_STANDARD.decode(base64_data) {
+                        if let Some(png_data) = convert_to_png(&decoded, mime_type) {
+                            let png_base64 = BASE64_STANDARD.encode(&png_data);
+                            let mut content = OneOrMany::one(UserContent::image_base64(
+                                png_base64,
+                                Some(ImageMediaType::PNG),
+                                Some(ImageDetail::Auto),
+                            ));
+                            content.push(UserContent::text("Describe this image in detail."));
+
+                            let request = self
+                                .build_request(&self.config.image_description_prompt, content)
+                                .build();
+
+                            return self.send_request(request).await;
+                        }
+                    }
+                }
+
+                if is_legacy_metafile(mime_type) {
+                    return Ok(format!(
+                        "[Image skipped: Windows Metafile format ({}) cannot be converted]",
+                        mime_type
+                    ));
+                }
+
+                return Ok(format!("[Image skipped: Unsupported format {}]", mime_type));
+            }
+        };
 
         let mut content = OneOrMany::one(UserContent::image_base64(
             base64_data.to_string(),
@@ -578,15 +755,43 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
                     let mut content =
                         OneOrMany::one(UserContent::text(&self.config.batch_image_prompt));
 
+                    let mut skipped_descriptions = Vec::new();
+                    let mut processed_count = 0;
+
                     for (i, (data, mime)) in chunk.iter().enumerate() {
-                        let base64_data = BASE64_STANDARD.encode(data);
-                        let image_type = parse_mime_to_image_type(mime);
-                        content.push(UserContent::text(format!("\n--- Image {} ---", i + 1)));
+                        // Prepare the image, converting if necessary
+                        let (base64_data, image_type) = match prepare_image_for_llm(data, mime) {
+                            PreparedImage::Ready(media_type) => {
+                                (BASE64_STANDARD.encode(data), media_type)
+                            }
+                            PreparedImage::Converted(png_data) => {
+                                (BASE64_STANDARD.encode(&png_data), ImageMediaType::PNG)
+                            }
+                            PreparedImage::Unsupported(reason) => {
+                                skipped_descriptions
+                                    .push((i, format!("[Image skipped: {}]", reason)));
+                                continue;
+                            }
+                        };
+
+                        processed_count += 1;
+                        content.push(UserContent::text(format!(
+                            "\n--- Image {} ---",
+                            processed_count
+                        )));
                         content.push(UserContent::image_base64(
                             base64_data,
                             Some(image_type),
                             Some(ImageDetail::Auto),
                         ));
+                    }
+
+                    // If all images in this chunk were skipped, add placeholders and continue
+                    if processed_count == 0 {
+                        for (_, desc) in skipped_descriptions {
+                            all_descriptions.push(desc);
+                        }
+                        continue;
                     }
 
                     let request = self
@@ -596,7 +801,14 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
                     let response = self.send_request(request).await?;
 
                     // Parse the response to extract individual descriptions
-                    let descriptions = parse_batch_response(&response, chunk.len());
+                    let mut descriptions = parse_batch_response(&response, processed_count);
+
+                    // Insert skipped placeholders at their original positions
+                    for (original_idx, placeholder) in skipped_descriptions {
+                        let insert_pos = original_idx.min(descriptions.len());
+                        descriptions.insert(insert_pos, placeholder);
+                    }
+
                     all_descriptions.extend(descriptions);
                 }
             }
@@ -610,8 +822,19 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
         image_data: &[u8],
         mime_type: &str,
     ) -> Result<String, MarkitdownError> {
-        let base64_data = BASE64_STANDARD.encode(image_data);
-        let image_type = parse_mime_to_image_type(mime_type);
+        // Prepare the image, converting if necessary
+        let (base64_data, image_type) = match prepare_image_for_llm(image_data, mime_type) {
+            PreparedImage::Ready(media_type) => (BASE64_STANDARD.encode(image_data), media_type),
+            PreparedImage::Converted(png_data) => {
+                (BASE64_STANDARD.encode(&png_data), ImageMediaType::PNG)
+            }
+            PreparedImage::Unsupported(reason) => {
+                return Err(MarkitdownError::LlmError(format!(
+                    "Cannot convert page image: {}",
+                    reason
+                )));
+            }
+        };
 
         let mut content = OneOrMany::one(UserContent::image_base64(
             base64_data,
@@ -824,4 +1047,103 @@ pub fn create_llm_client_with_config<M: CompletionModel + Send + Sync + 'static>
     config: LlmConfig,
 ) -> SharedLlmClient {
     Arc::new(LlmWrapper::with_config(model, config))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mime_to_image_type() {
+        assert!(matches!(
+            parse_mime_to_image_type("image/png"),
+            Some(ImageMediaType::PNG)
+        ));
+        assert!(matches!(
+            parse_mime_to_image_type("image/jpeg"),
+            Some(ImageMediaType::JPEG)
+        ));
+        assert!(matches!(
+            parse_mime_to_image_type("image/jpg"),
+            Some(ImageMediaType::JPEG)
+        ));
+        assert!(matches!(
+            parse_mime_to_image_type("image/gif"),
+            Some(ImageMediaType::GIF)
+        ));
+        assert!(matches!(
+            parse_mime_to_image_type("image/webp"),
+            Some(ImageMediaType::WEBP)
+        ));
+        // Unsupported formats return None
+        assert!(parse_mime_to_image_type("image/bmp").is_none());
+        assert!(parse_mime_to_image_type("image/tiff").is_none());
+        assert!(parse_mime_to_image_type("image/emf").is_none());
+        assert!(parse_mime_to_image_type("image/wmf").is_none());
+    }
+
+    #[test]
+    fn test_is_convertible_format() {
+        assert!(is_convertible_format("image/bmp"));
+        assert!(is_convertible_format("image/tiff"));
+        assert!(is_convertible_format("image/x-tiff"));
+        assert!(is_convertible_format("image/x-ms-bmp"));
+        // Not convertible
+        assert!(!is_convertible_format("image/emf"));
+        assert!(!is_convertible_format("image/wmf"));
+        assert!(!is_convertible_format("image/png"));
+    }
+
+    #[test]
+    fn test_is_legacy_metafile() {
+        assert!(is_legacy_metafile("image/emf"));
+        assert!(is_legacy_metafile("image/wmf"));
+        assert!(is_legacy_metafile("image/x-emf"));
+        assert!(is_legacy_metafile("image/x-wmf"));
+        assert!(is_legacy_metafile("application/x-msmetafile"));
+        // Not metafiles
+        assert!(!is_legacy_metafile("image/png"));
+        assert!(!is_legacy_metafile("image/bmp"));
+    }
+
+    #[test]
+    fn test_prepare_image_for_llm_supported_format() {
+        // PNG is directly supported
+        let png_header = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        match prepare_image_for_llm(&png_header, "image/png") {
+            PreparedImage::Ready(ImageMediaType::PNG) => {}
+            _ => panic!("Expected Ready(PNG)"),
+        }
+    }
+
+    #[test]
+    fn test_prepare_image_for_llm_metafile() {
+        // EMF/WMF should return Unsupported with descriptive message
+        let dummy_data = [0x01, 0x00, 0x00, 0x00];
+        match prepare_image_for_llm(&dummy_data, "image/emf") {
+            PreparedImage::Unsupported(msg) => {
+                assert!(msg.contains("Windows Metafile"));
+                assert!(msg.contains("cannot be converted"));
+            }
+            _ => panic!("Expected Unsupported for EMF"),
+        }
+
+        match prepare_image_for_llm(&dummy_data, "image/wmf") {
+            PreparedImage::Unsupported(msg) => {
+                assert!(msg.contains("Windows Metafile"));
+            }
+            _ => panic!("Expected Unsupported for WMF"),
+        }
+    }
+
+    #[test]
+    fn test_prepare_image_for_llm_unknown_format() {
+        let dummy_data = [0x00, 0x00, 0x00, 0x00];
+        match prepare_image_for_llm(&dummy_data, "image/unknown") {
+            PreparedImage::Unsupported(msg) => {
+                assert!(msg.contains("Unsupported image format"));
+            }
+            _ => panic!("Expected Unsupported for unknown format"),
+        }
+    }
 }
