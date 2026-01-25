@@ -2006,6 +2006,7 @@ dependencies = [
  "flate2",
  "futures",
  "hayro",
+ "hayro-syntax",
  "html2md",
  "icalendar",
  "image",

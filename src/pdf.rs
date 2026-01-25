@@ -12,6 +12,8 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use hayro::{render, InterpreterSettings, Pdf, RenderSettings};
+use hayro_syntax::object::dict::keys::{HEIGHT, SUBTYPE, WIDTH};
+use hayro_syntax::object::{Name, Stream};
 use object_store::ObjectStore;
 use pdf_extract;
 use std::sync::Arc;
@@ -20,8 +22,18 @@ use crate::error::MarkitdownError;
 use crate::llm::LlmClient;
 use crate::model::{ContentBlock, ConversionOptions, Document, DocumentConverter, Page};
 
-/// Threshold for "low text" - if page has images and text below this, render whole page
-const LOW_TEXT_WORD_THRESHOLD: usize = 350;
+/// Threshold for "low text" - if page has significant images and text below this, render whole page
+/// This is set high because pages with good text extraction don't need LLM even with images
+const LOW_TEXT_WORD_THRESHOLD: usize = 150;
+
+/// Minimum number of XObjects to consider a page "image-heavy"
+/// A single image (likely a logo/watermark) won't trigger LLM fallback
+/// We need multiple images to suggest the page has meaningful visual content
+const MIN_SIGNIFICANT_XOBJECTS: usize = 2;
+
+/// Minimum image dimension (width or height) in pixels to be considered significant
+/// Images smaller than this are likely logos, icons, or decorative elements
+const MIN_SIGNIFICANT_IMAGE_SIZE: u32 = 100;
 
 /// Minimum ratio of valid words to total words for acceptable quality
 const MIN_VALID_WORD_RATIO: f64 = 0.6;
@@ -202,10 +214,20 @@ impl PageMetrics {
             return true;
         }
 
-        // If we have to use LLM for images anyway, giving it the whole
-        // page provides better context for conversion. But only if text is limited
-        // to avoid OCR errors on text-heavy pages.
-        if self.xobject_count > 0 && self.word_count < LOW_TEXT_WORD_THRESHOLD {
+        // Only use LLM for pages that appear to have content-bearing images:
+        // - Multiple XObjects (not just a single logo/watermark)
+        // - AND limited text that might benefit from image context
+        // - AND text quality is not already high (avoid re-processing good extractions)
+        if self.xobject_count >= MIN_SIGNIFICANT_XOBJECTS
+            && self.word_count < LOW_TEXT_WORD_THRESHOLD
+            && !self.is_high_quality()
+        {
+            return true;
+        }
+
+        // Special case: page has many XObjects (likely diagram-heavy) even with some text
+        // but only if text quality is poor
+        if self.xobject_count >= 5 && !self.is_high_quality() {
             return true;
         }
 
@@ -324,14 +346,89 @@ impl PdfConverter {
         result
     }
 
-    /// Count XObjects (images, forms) on a page
-    fn count_page_xobjects(pdf: &Pdf, page_index: usize) -> usize {
+    /// Count significant XObjects (images, forms) on a page
+    /// Attempts to filter out small images (logos, icons, watermarks) by checking dimensions.
+    /// Falls back to counting all XObjects if dimension extraction fails.
+    fn count_significant_xobjects(pdf: &Pdf, page_index: usize) -> usize {
         let pages = pdf.pages();
-        if let Some(page) = pages.get(page_index) {
-            // XObjects dictionary contains Image and Form XObjects
-            page.resources().x_objects.len()
-        } else {
-            0
+        let page = match pages.get(page_index) {
+            Some(p) => p,
+            None => return 0,
+        };
+
+        let x_objects = &page.resources().x_objects;
+        let total_count = x_objects.len();
+
+        // If there are no XObjects or just one, return early
+        // (single XObject is likely a logo anyway)
+        if total_count <= 1 {
+            return total_count;
+        }
+
+        // Try to count only significant XObjects by checking their dimensions
+        // This is a best-effort approach - if anything fails, we count it as significant
+        let significant_count = x_objects
+            .keys()
+            .filter(|name| {
+                // Try to get the XObject as a Stream to check its dimensions
+                // If we can't get it as a stream, or can't read dimensions,
+                // assume it's significant (conservative approach)
+                Self::is_xobject_significant(x_objects, name)
+            })
+            .count();
+
+        significant_count
+    }
+
+    /// Check if an XObject is "significant" (not a small logo/icon/watermark).
+    /// Uses a conservative approach: if we can't determine size, assume it's significant.
+    fn is_xobject_significant(x_objects: &hayro_syntax::object::Dict, name: &Name) -> bool {
+        // Try to get the XObject stream
+        // Name implements Deref<Target = [u8]>, so we can pass &*name for the lookup
+        let stream: Option<Stream> = x_objects.get(&**name);
+
+        let stream = match stream {
+            Some(s) => s,
+            None => {
+                // Can't get stream - assume significant (conservative)
+                return true;
+            }
+        };
+
+        // Get the stream's dictionary to access Width/Height
+        let dict = stream.dict();
+
+        // Try to read Width and Height
+        // Note: These are standard PDF image XObject keys
+        let width: Option<i32> = dict.get(WIDTH);
+        let height: Option<i32> = dict.get(HEIGHT);
+
+        match (width, height) {
+            (Some(w), Some(h)) => {
+                // Check if the image is large enough to be significant
+                let w = w.unsigned_abs();
+                let h = h.unsigned_abs();
+                w >= MIN_SIGNIFICANT_IMAGE_SIZE || h >= MIN_SIGNIFICANT_IMAGE_SIZE
+            }
+            _ => {
+                // Can't read dimensions - might be a Form XObject or other type
+                // Check if it's an Image subtype, otherwise assume significant
+                let subtype: Option<Name> = dict.get(SUBTYPE);
+                match subtype {
+                    Some(st) if &*st == b"Image" => {
+                        // It's an image but we can't read dimensions - assume significant
+                        true
+                    }
+                    Some(_) => {
+                        // It's a Form or other XObject type - assume significant
+                        true
+                    }
+                    None => {
+                        // No subtype - assume significant
+                        true
+                    }
+                }
+            }
         }
     }
 
@@ -359,17 +456,59 @@ impl PdfConverter {
             page_texts.len()
         };
 
-        let mut document = Document::new();
+        // Analyze which pages need LLM processing
+        let mut page_metrics: Vec<(usize, PageMetrics)> = Vec::with_capacity(page_count);
+        let mut pages_needing_llm: Vec<usize> = Vec::new();
 
         for idx in 0..page_count {
             let page_text = page_texts.get(idx).map(|s| s.as_str()).unwrap_or("");
             let xobject_count = pdf
                 .as_ref()
-                .map(|p| Self::count_page_xobjects(p, idx))
+                .map(|p| Self::count_significant_xobjects(p, idx))
                 .unwrap_or(0);
 
             let metrics = PageMetrics::from_text_with_xobjects(page_text, xobject_count);
-            let page = Self::process_page(idx, &metrics, llm_client, &pdf, force_llm).await;
+            let needs_llm = (force_llm || metrics.should_use_llm())
+                && llm_client.is_some()
+                && pdf.is_some();
+
+            if needs_llm {
+                pages_needing_llm.push(idx);
+            }
+            page_metrics.push((idx, metrics));
+        }
+
+        // Batch render and process pages that need LLM
+        let llm_results = if !pages_needing_llm.is_empty() {
+            if let (Some(llm), Some(ref pdf_ref)) = (llm_client, &pdf) {
+                Self::batch_llm_convert(&pages_needing_llm, pdf_ref, llm).await
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        // Build document with results
+        let mut document = Document::new();
+
+        for (idx, metrics) in page_metrics {
+            let mut page = Page::new((idx + 1) as u32);
+
+            // Check if we have LLM result for this page
+            if let Some(Some(markdown)) = llm_results.get(&idx) {
+                page.add_content(ContentBlock::Markdown(markdown.clone()));
+            } else if !metrics.text.is_empty() {
+                // Use extracted text
+                if !metrics.is_high_quality() && llm_client.is_none() {
+                    page.add_content(ContentBlock::Text(format!(
+                        "[Note: Text extraction quality may be poor]\n\n{}",
+                        metrics.text
+                    )));
+                } else {
+                    page.add_content(ContentBlock::Text(metrics.text.clone()));
+                }
+            }
 
             if !page.content.is_empty() {
                 document.add_page(page);
@@ -389,64 +528,41 @@ impl PdfConverter {
         Ok(document)
     }
 
-    /// Process a single page with optional LLM fallback
-    async fn process_page(
-        idx: usize,
-        metrics: &PageMetrics,
-        llm_client: Option<&dyn LlmClient>,
-        pdf: &Option<Pdf>,
-        force_llm: bool,
-    ) -> Page {
-        let mut page = Page::new((idx + 1) as u32);
-        let use_llm =
-            (force_llm || metrics.should_use_llm()) && llm_client.is_some() && pdf.is_some();
+    /// Batch convert pages using LLM with parallel processing
+    async fn batch_llm_convert(
+        pages_needing_llm: &[usize],
+        pdf: &Pdf,
+        llm: &dyn LlmClient,
+    ) -> std::collections::HashMap<usize, Option<String>> {
+        // Render all pages that need LLM processing
+        let rendered_pages: Vec<(usize, Vec<u8>)> = pages_needing_llm
+            .iter()
+            .filter_map(|&idx| {
+                Self::render_page_as_image(pdf, idx)
+                    .ok()
+                    .map(|png| (idx, png))
+            })
+            .collect();
 
-        if use_llm {
-            if let Some(content) = Self::try_llm_conversion(idx, metrics, llm_client, pdf).await {
-                page.add_content(content);
-                return page;
-            }
+        if rendered_pages.is_empty() {
+            return std::collections::HashMap::new();
         }
 
-        // Use extracted text (either LLM not needed or LLM failed)
-        if !metrics.text.is_empty() {
-            // If text quality is poor and we have LLM, add a note
-            if !metrics.is_high_quality() && llm_client.is_none() {
-                page.add_content(ContentBlock::Text(format!(
-                    "[Note: Text extraction quality may be poor]\n\n{}",
-                    metrics.text
-                )));
-            } else {
-                page.add_content(ContentBlock::Text(metrics.text.clone()));
-            }
-        }
+        // Prepare batch for LLM
+        let page_data: Vec<(&[u8], &str)> = rendered_pages
+            .iter()
+            .map(|(_, png)| (png.as_slice(), "image/png"))
+            .collect();
 
-        page
-    }
+        // Process in parallel batches
+        let results = llm.convert_page_images_batch(&page_data).await;
 
-    /// Try to convert a page using LLM
-    async fn try_llm_conversion(
-        idx: usize,
-        metrics: &PageMetrics,
-        llm_client: Option<&dyn LlmClient>,
-        pdf: &Option<Pdf>,
-    ) -> Option<ContentBlock> {
-        let llm = llm_client?;
-        let pdf_ref = pdf.as_ref()?;
-
-        let png_data = Self::render_page_as_image(pdf_ref, idx).ok()?;
-
-        match llm.convert_page_image(&png_data, "image/png").await {
-            Ok(markdown) if !markdown.trim().is_empty() => Some(ContentBlock::Markdown(markdown)),
-            _ => {
-                // LLM failed or returned empty, fall back to extracted text
-                if !metrics.text.is_empty() {
-                    Some(ContentBlock::Text(metrics.text.clone()))
-                } else {
-                    None
-                }
-            }
-        }
+        // Map results back to page indices
+        rendered_pages
+            .into_iter()
+            .zip(results)
+            .map(|((idx, _), result)| (idx, result))
+            .collect()
     }
 
     /// Try LLM fallback for all pages when initial extraction failed
@@ -457,15 +573,15 @@ impl PdfConverter {
         pdf: &Option<Pdf>,
     ) {
         if let (Some(llm), Some(ref pdf_ref)) = (llm_client, pdf) {
+            // Use batch processing for all pages
+            let all_pages: Vec<usize> = (0..page_count).collect();
+            let results = Self::batch_llm_convert(&all_pages, pdf_ref, llm).await;
+
             for idx in 0..page_count {
                 let mut page = Page::new((idx + 1) as u32);
 
-                if let Ok(png_data) = Self::render_page_as_image(pdf_ref, idx) {
-                    if let Ok(markdown) = llm.convert_page_image(&png_data, "image/png").await {
-                        if !markdown.trim().is_empty() {
-                            page.add_content(ContentBlock::Markdown(markdown));
-                        }
-                    }
+                if let Some(Some(markdown)) = results.get(&idx) {
+                    page.add_content(ContentBlock::Markdown(markdown.clone()));
                 }
 
                 if !page.content.is_empty() {

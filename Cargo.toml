@@ -38,6 +38,7 @@ async-trait = "0.1"
 url = "2.5"
 thiserror = "2.0"
 hayro = {version="0.4.0", features = ["embed-fonts"]}
+hayro-syntax = "0.4.0"
 rtf-parser = "0.4.2"
 rbook = {git = "https://github.com/TM9657/rbook.git", branch = "master"}
 mail-parser = "0.11.1"

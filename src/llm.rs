@@ -50,8 +50,23 @@ pub struct LlmConfig {
     /// Number of images to send per LLM message for parallelization
     /// Default: 1 (one image per request)
     pub images_per_message: usize,
+    /// Number of PDF pages to process in parallel
+    /// Higher values speed up conversion but use more memory and API rate limit
+    /// Default: 4 (process 4 pages concurrently)
+    pub pages_per_batch: usize,
     /// Maximum tokens for LLM output (None = no limit)
-    /// Helps prevent runaway generation from poorly-behaved models
+    /// Helps prevent runaway generation from poorly-behaved models.
+    ///
+    /// **Important**: This value is passed directly to the LLM provider.
+    /// If it exceeds the model's maximum output tokens, the API will return an error.
+    /// Common limits:
+    /// - GPT-4o: 16,384 tokens
+    /// - Claude 3.5 Sonnet: 8,192 tokens  
+    /// - Free/smaller models: often 2,048-4,096 tokens
+    ///
+    /// The default of `None` lets the model use its natural limit, which is
+    /// generally safe but may allow runaway generation on some models.
+    /// For free-tier or less reliable models, consider setting this explicitly.
     pub max_tokens: Option<u64>,
 }
 
@@ -63,7 +78,8 @@ impl Default for LlmConfig {
             batch_image_prompt: DEFAULT_BATCH_IMAGE_PROMPT.to_string(),
             temperature: 0.1, // Low temperature for accurate extraction with minimal repetition
             images_per_message: 1,
-            max_tokens: Some(4096), // Reasonable default to prevent runaway generation
+            pages_per_batch: 4, // Process 4 pages concurrently by default
+            max_tokens: None, // Let model use its natural limit; set explicitly for unreliable models
         }
     }
 }
@@ -101,6 +117,13 @@ impl LlmConfig {
     /// Set images per message for batching
     pub fn with_images_per_message(mut self, count: usize) -> Self {
         self.images_per_message = count.max(1);
+        self
+    }
+
+    /// Set pages per batch for parallel PDF processing
+    /// Higher values process more pages concurrently but use more memory
+    pub fn with_pages_per_batch(mut self, count: usize) -> Self {
+        self.pages_per_batch = count.max(1);
         self
     }
 
@@ -161,6 +184,13 @@ pub trait LlmClient: Send + Sync {
         image_data: &[u8],
         mime_type: &str,
     ) -> Result<String, MarkitdownError>;
+
+    /// Convert multiple page images to markdown in parallel
+    /// Returns results in the same order as input, with None for failed conversions
+    async fn convert_page_images_batch(
+        &self,
+        pages: &[(&[u8], &str)], // (image_data, mime_type) pairs
+    ) -> Vec<Option<String>>;
 
     /// Generate a text completion
     async fn complete(&self, prompt: &str) -> Result<String, MarkitdownError>;
@@ -445,9 +475,12 @@ fn extract_text_from_response(content: &OneOrMany<AssistantContent>) -> String {
 /// Some models (especially free tier ones) can get stuck in loops, generating
 /// the same phrase thousands of times. This function detects such patterns
 /// and truncates the output at the first repetition.
+///
+/// This function is intentionally conservative to avoid truncating legitimate content
+/// that may have natural repetition (table headers, code patterns, etc.).
 fn detect_and_truncate_repetition(text: &str) -> String {
-    // If text is short, no need to check
-    if text.len() < 500 {
+    // If text is short, no need to check - increased threshold to avoid false positives
+    if text.len() < 2000 {
         return text.to_string();
     }
 
@@ -482,14 +515,15 @@ fn detect_and_truncate_repetition(text: &str) -> String {
     }
 
     // Strategy 1: Check for repeating substrings using sliding window
-    // Look for any 30+ char pattern that repeats 3+ times
+    // Look for patterns that repeat many times (indicating a stuck model)
+    // Use larger window sizes and higher thresholds to avoid false positives
     let char_count = text.chars().count();
-    let check_sizes = [30usize, 50, 80, 100];
+    let check_sizes = [50usize, 80, 100, 150];
 
     for &window_size in &check_sizes {
-        if char_count > window_size * 4 {
+        if char_count > window_size * 8 {
             // Sample multiple positions throughout the text
-            let sample_count = 10.min(char_count / window_size);
+            let sample_count = 8.min(char_count / window_size);
             for i in 0..sample_count {
                 let char_start = (char_count / sample_count) * i;
                 let char_end = char_start + window_size;
@@ -501,14 +535,27 @@ fn detect_and_truncate_repetition(text: &str) -> String {
                         continue;
                     }
 
+                    // Skip samples that look like common structural patterns
+                    // (markdown headers, table separators, list markers, etc.)
+                    let trimmed = sample.trim();
+                    if trimmed.starts_with('#')
+                        || trimmed.starts_with('|')
+                        || trimmed.starts_with('-')
+                        || trimmed.starts_with('*')
+                        || trimmed.starts_with('>')
+                    {
+                        continue;
+                    }
+
                     let count = text.matches(sample).count();
-                    if count >= 3 {
-                        // Found repetition - truncate at first occurrence + some buffer
+                    // Require at least 5 repetitions (was 3) to avoid false positives
+                    if count >= 5 {
+                        // Found likely repetition - but keep more content
                         if let Some(first_byte_pos) = text.find(sample) {
                             // Find character position of first occurrence
                             let first_char_pos = text[..first_byte_pos].chars().count();
-                            // Truncate at first occurrence + 2x window size (in chars)
-                            let truncate_at = first_char_pos + window_size * 2;
+                            // Keep more content: first occurrence + 4x window size (was 2x)
+                            let truncate_at = first_char_pos + window_size * 4;
                             let truncated = safe_truncate_chars(text, truncate_at);
                             return format!(
                                 "{}\n\n[Note: Repetitive content detected and truncated]",
@@ -522,19 +569,33 @@ fn detect_and_truncate_repetition(text: &str) -> String {
     }
 
     // Strategy 2: Look for consecutive identical lines (fallback)
+    // Require more consecutive lines and longer content to avoid false positives
     let lines: Vec<&str> = text.lines().collect();
     let mut seen_consecutive = 0;
     let mut last_line = "";
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         // Use char count instead of byte length for comparison
-        if trimmed.is_empty() || trimmed.chars().count() < 10 {
+        // Increased minimum line length to 20 chars (was 10)
+        if trimmed.is_empty() || trimmed.chars().count() < 20 {
+            continue;
+        }
+        // Skip common structural patterns that legitimately repeat
+        if trimmed.starts_with('#')
+            || trimmed.starts_with('|')
+            || trimmed.starts_with('-')
+            || trimmed.starts_with('*')
+            || trimmed.starts_with('>')
+            || trimmed.chars().all(|c| c == '-' || c == '=' || c == '_')
+        {
             continue;
         }
         if trimmed == last_line {
             seen_consecutive += 1;
-            if seen_consecutive >= 4 {
-                let truncate_at = i.saturating_sub(seen_consecutive);
+            // Increased threshold from 4 to 6 consecutive identical lines
+            if seen_consecutive >= 6 {
+                // Keep the first occurrence of the repeated content
+                let truncate_at = i.saturating_sub(seen_consecutive - 1);
                 let truncated: Vec<&str> = lines[..truncate_at].to_vec();
                 return format!(
                     "{}\n\n[Note: Repetitive content detected and truncated]",
@@ -548,11 +609,12 @@ fn detect_and_truncate_repetition(text: &str) -> String {
     }
 
     // Strategy 3: Check if output is suspiciously long for a single page
-    // Normal pages are typically 500-3000 words; anything over 5000 is suspicious
+    // Normal pages are typically 500-3000 words; but some documents can be longer
+    // Increased threshold significantly to avoid truncating legitimate dense content
     let word_count = text.split_whitespace().count();
-    if word_count > 5000 {
-        // Truncate to approximately 3000 words
-        let words: Vec<&str> = text.split_whitespace().take(3000).collect();
+    if word_count > 10000 {
+        // Truncate to approximately 8000 words (was 3000)
+        let words: Vec<&str> = text.split_whitespace().take(8000).collect();
         let truncated = words.join(" ");
         return format!(
             "{}\n\n[Note: Output truncated due to excessive length - possible repetition]",
@@ -875,6 +937,36 @@ impl<M: CompletionModel + Send + Sync + 'static> LlmClient for LlmWrapper<M> {
         self.send_request(request).await
     }
 
+    async fn convert_page_images_batch(
+        &self,
+        pages: &[(&[u8], &str)],
+    ) -> Vec<Option<String>> {
+        if pages.is_empty() {
+            return Vec::new();
+        }
+
+        // Process pages in parallel, respecting pages_per_batch limit
+        let batch_size = self.config.pages_per_batch;
+        let mut all_results = Vec::with_capacity(pages.len());
+
+        for chunk in pages.chunks(batch_size) {
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|(data, mime)| async move {
+                    match self.convert_page_image(data, mime).await {
+                        Ok(markdown) if !markdown.trim().is_empty() => Some(markdown),
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            let results = join_all(futures).await;
+            all_results.extend(results);
+        }
+
+        all_results
+    }
+
     async fn complete(&self, prompt: &str) -> Result<String, MarkitdownError> {
         let content = OneOrMany::one(UserContent::text(prompt));
         let request = self
@@ -1045,6 +1137,13 @@ impl LlmClient for MockLlmClient {
         _mime_type: &str,
     ) -> Result<String, MarkitdownError> {
         Ok(self.text_response.clone())
+    }
+
+    async fn convert_page_images_batch(
+        &self,
+        pages: &[(&[u8], &str)],
+    ) -> Vec<Option<String>> {
+        vec![Some(self.text_response.clone()); pages.len()]
     }
 
     async fn complete(&self, _prompt: &str) -> Result<String, MarkitdownError> {
