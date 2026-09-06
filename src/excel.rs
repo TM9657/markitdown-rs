@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use calamine::{Reader, Xlsx};
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::io::Cursor;
 use std::sync::Arc;
 

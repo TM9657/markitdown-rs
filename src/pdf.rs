@@ -18,7 +18,7 @@ use hayro_syntax::object::{Name, Stream};
 use hayro_syntax::Pdf;
 use liteparse::types::PdfInput;
 use liteparse::{LiteParse, LiteParseConfig, OutputFormat};
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::sync::Arc;
 
 use crate::error::MarkitdownError;

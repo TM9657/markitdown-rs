@@ -4,7 +4,7 @@ use docx_rust::{
     document::{BodyContent, TableCellContent, TableRowContent},
     DocxFile,
 };
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::io::{Cursor, Read};
 use std::sync::Arc;
 use zip::ZipArchive;

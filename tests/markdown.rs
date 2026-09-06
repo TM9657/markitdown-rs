@@ -1,7 +1,9 @@
 //! Markdown conversion tests (passthrough and normalization)
 
 use bytes::Bytes;
+use markitdown::error::MarkitdownError;
 use markitdown::{ConversionOptions, MarkItDown};
+use object_store::{path::Path as ObjectPath, ObjectStoreExt};
 use std::fs;
 
 fn default_options(ext: &str) -> ConversionOptions {
@@ -73,4 +75,46 @@ async fn test_markdown_bytes_conversion() {
         "Markdown bytes conversion failed: {:?}",
         result.err()
     );
+}
+
+#[tokio::test]
+async fn test_markdown_object_store_conversion() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let local_path = temp_dir.path().join("stored.md");
+    assert!(!local_path.exists());
+    let path = local_path.to_str().unwrap();
+    let object_path = ObjectPath::from(path);
+    let md = MarkItDown::in_memory();
+    md.store()
+        .put(
+            &object_path,
+            Bytes::from_static(b"# Stored document\r\n\r\nRead from object storage.\r\n").into(),
+        )
+        .await
+        .unwrap();
+
+    let doc = md.convert(path, None).await.unwrap();
+
+    assert_eq!(
+        doc.to_markdown(),
+        "# Stored document\n\nRead from object storage."
+    );
+}
+
+#[tokio::test]
+async fn test_markdown_missing_object_store_file() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let local_path = temp_dir.path().join("missing.md");
+    assert!(!local_path.exists());
+    let path = local_path.to_str().unwrap();
+    let md = MarkItDown::in_memory();
+
+    let error = md.convert(path, None).await.unwrap_err();
+
+    match error {
+        MarkitdownError::ObjectStoreError(message) => {
+            assert!(message.contains(ObjectPath::from(path).as_ref()));
+        }
+        other => panic!("Expected object store error, got {other:?}"),
+    }
 }

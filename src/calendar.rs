@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use icalendar::{Calendar, CalendarComponent, Component, EventLike};
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::sync::Arc;
 
 use crate::error::MarkitdownError;

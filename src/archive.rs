@@ -8,7 +8,7 @@ use bytes::Bytes;
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use liblzma::read::XzDecoder;
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::io::{Cursor, Read};
 use std::sync::Arc;
 use zstd::stream::read::Decoder as ZstdDecoder;

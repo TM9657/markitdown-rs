@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use std::sync::Arc;
 use vcard_parser::parse_vcards;
 use vcard_parser::traits::HasValue;

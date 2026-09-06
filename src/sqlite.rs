@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use sqlx::{Row, SqlitePool};
 use std::io::Write;
 use std::sync::Arc;

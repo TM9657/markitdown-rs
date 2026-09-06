@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use rbook::prelude::*;
 use rbook::reader::Reader;
 use rbook::Epub;
