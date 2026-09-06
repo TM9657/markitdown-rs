@@ -88,7 +88,7 @@ async fn test_markdown_object_store_conversion() {
     md.store()
         .put(
             &object_path,
-            Bytes::from_static(b"# Stored document\r\n\r\nRead from object storage.\r\n").into(),
+            Bytes::from_static(b"# Stored document\n\nRead from object storage.").into(),
         )
         .await
         .unwrap();
